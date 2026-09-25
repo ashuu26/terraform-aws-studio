@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terraform AWS Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand-row">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+          <rect x="1" y="1" width="38" height="38" rx="9" fill="var(--plan)"/>
+          <path d="M9 12.5l7 4v8l-7-4z" fill="#fff" opacity=".55"/><path d="M17.5 17.5l7-4v8l-7 4z" fill="#fff"/><path d="M17.5 27l7-4v8l-7-4z" fill="#fff" opacity=".8"/><path d="M26 12.5l6-3.5v8l-6 3.5z" fill="#fff" opacity=".7"/>
+        </svg>
+        <div>
+          <h1>Terraform AWS Studio</h1>
+          <p>AWS Provider | Terraform Registry | Infrastructure as Code</p>
+          <p class="byline">&copy; Created by Ashu Saini</p>
+        </div>
+      </div>
+      <div class="controls">
+        <label class="ctl" title="Sets required_version in providers.tf">Terraform
+          <select class="inp" id="tfVersion"></select></label>
+        <label class="ctl" id="provCtl">AWS provider
+          <select class="inp" id="provVersion"></select></label>
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <label class="sr" for="q">Search services, resources or keywords</label>
+          <input class="inp" id="q" type="search" placeholder="Search services or aws_ resources" autocomplete="off">
+          <kbd aria-hidden="true">/</kbd>
+        </div>
+        <button class="btn ghost" id="themeBtn" title="Toggle dark or light mode" aria-label="Toggle dark or light mode"></button>
+        <button class="btn" id="resetBtn">Reset</button>
+        <button class="btn primary" id="genBtnTop">Generate Terraform</button>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Dashboard sections" id="tabs"></nav>
+  </div>
+</header>
+
+<div class="layout">
+  <main id="main" tabindex="-1"></main>
+  <aside class="panel summary" id="summary" aria-label="Project summary"></aside>
+</div>
+
+<footer class="site-foot">
+  <span>&copy; <span id="yr">2026</span> Terraform AWS Studio. Created by <b>Ashu Saini</b>.</span>
+  <span class="hint">Not affiliated with AWS or HashiCorp. Terraform and AWS are trademarks of their respective owners.</span>
+</footer>
+
+<div class="scrim" id="scrim" hidden></div>
+<section class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" hidden></section>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>/*__JS__*/</script>
+</body>
+</html>
