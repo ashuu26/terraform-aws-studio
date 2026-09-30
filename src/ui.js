@@ -8,8 +8,8 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const STORE_KEY = 'tf-aws-dashboard:v1';
 const DIFFS = ['Beginner', 'Intermediate', 'Advanced'];
-const CAT_VAR = { networking: 'var(--net)', compute: 'var(--cmp)', database: 'var(--db)', storage: 'var(--sto)', root: 'var(--root)', extra: 'var(--root)' };
-const ABBR = { vpc: 'VPC', subnet: 'SUB', route_table: 'RT', igw: 'IGW', eip: 'EIP', nat: 'NAT', sg: 'SG', nacl: 'ACL', vpc_endpoint: 'VPCE', tgw: 'TGW', tgw_attach: 'TGWA', alb: 'ALB', nlb: 'NLB', tg: 'TG', route53_zone: 'R53', route53_record: 'DNS', waf: 'WAF', cloudfront: 'CF', vgw: 'VGW', cgw: 'CGW', vpn: 'VPN', ec2: 'EC2', lt: 'LT', asg: 'ASG', listener: 'LSN', lambda: 'λ', ecs_cluster: 'ECS', ecs_task: 'TASK', ecs_service: 'SVC', eks_cluster: 'EKS', eks_node_group: 'NG', ecr: 'ECR', ssm: 'SSM', iam_role: 'ROLE', iam_policy: 'POL', dbsg: 'DBSG', rds: 'RDS', rds_postgres: 'PG', rds_mysql: 'MY', rds_sqlserver: 'MSSQL', aurora: 'AUR', dynamodb: 'DDB', elasticache: 'EC', memorydb: 'MDB', s3: 'S3', s3_versioning: 'VER', s3_encryption: 'ENC', s3_lifecycle: 'LC', ebs: 'EBS', efs: 'EFS', fsx: 'FSx', backup: 'BKP', kms: 'KMS' };
+const CAT_VAR = { networking: 'var(--net)', compute: 'var(--cmp)', database: 'var(--db)', storage: 'var(--sto)', backup: 'var(--bkp)', monitoring: 'var(--mon)', root: 'var(--root)', extra: 'var(--root)' };
+const ABBR = { vpc: 'VPC', subnet: 'SUB', route_table: 'RT', igw: 'IGW', eip: 'EIP', nat: 'NAT', sg: 'SG', nacl: 'ACL', vpc_endpoint: 'VPCE', tgw: 'TGW', tgw_attach: 'TGWA', alb: 'ALB', nlb: 'NLB', tg: 'TG', route53_zone: 'R53', route53_record: 'DNS', waf: 'WAF', cloudfront: 'CF', vgw: 'VGW', cgw: 'CGW', vpn: 'VPN', ec2: 'EC2', lt: 'LT', asg: 'ASG', listener: 'LSN', lambda: 'λ', ecs_cluster: 'ECS', ecs_task: 'TASK', ecs_service: 'SVC', eks_cluster: 'EKS', eks_node_group: 'NG', ecr: 'ECR', ssm: 'SSM', iam_role: 'ROLE', iam_policy: 'POL', dbsg: 'DBSG', rds: 'RDS', rds_postgres: 'PG', rds_mysql: 'MY', rds_sqlserver: 'MSSQL', aurora: 'AUR', dynamodb: 'DDB', elasticache: 'EC', memorydb: 'MDB', s3: 'S3', s3_versioning: 'VER', s3_encryption: 'ENC', s3_lifecycle: 'LC', ebs: 'EBS', efs: 'EFS', fsx: 'FSx', backup: 'BKP', kms: 'KMS', cloudwatch: 'CW' };
 const TABS = [['services', 'Services'], ['files', 'Terraform files'], ['arch', 'Architecture'], ['modules', 'Modules'], ['learn', 'Learn Terraform'], ['cli', 'CLI & auth']];
 const PROVIDER_OPTIONS = [
   ['~> 6.0', 'any 6.x'],
@@ -24,6 +24,12 @@ const FILE_ROLE = {
   'data.tf': 'Data sources: read-only lookups (availability zones, the latest AMI, your account ID) shared by several services.',
   'outputs.tf': 'Values printed after apply and readable by other configurations through remote state.',
   'terraform.tfvars.example': 'A template for terraform.tfvars. Copy it, then change values for your environment. Never put credentials here.',
+};
+
+// Summary-panel checklist for services built from several optional parts: [resource type, label].
+const COMPONENTS = {
+  backup: [['aws_backup_vault', 'Backup vault'], ['aws_backup_plan', 'Backup plan and rule'], ['aws_backup_selection', 'Backup selection'], ['aws_iam_role', 'IAM backup role'], ['aws_backup_vault_policy', 'Vault access policy'], ['aws_backup_vault_lock_configuration', 'Vault Lock']],
+  cloudwatch: [['aws_cloudwatch_log_group', 'Log group'], ['aws_cloudwatch_log_metric_filter', 'Log metric filter'], ['aws_cloudwatch_metric_alarm', 'Metric alarm'], ['aws_cloudwatch_composite_alarm', 'Composite alarm'], ['aws_cloudwatch_dashboard', 'Dashboard'], ['aws_cloudwatch_event_rule', 'EventBridge rule'], ['aws_sns_topic', 'SNS topic'], ['aws_backup_vault_notifications', 'Backup vault notifications']],
 };
 
 /* ---------------- state ---------------- */
@@ -230,9 +236,11 @@ function toggle(id, opts = {}) {
   }
   changed();
 }
+// Static dependencies plus the ones the service suggests for its current settings.
+const depsFor = id => depsOf(id, cfgOf(id), isSel);
 function recommendations() {
   const m = new Map();
-  for (const id of state.sel) for (const d of SVC[id].deps) if (!isSel(d)) { if (!m.has(d)) m.set(d, []); m.get(d).push(id); }
+  for (const id of state.sel) for (const d of depsFor(id)) if (!isSel(d)) { if (!m.has(d)) m.set(d, []); m.get(d).push(id); }
   return [...m.entries()].map(([id, by]) => ({ id, by }));
 }
 function addRecommended(ids) {
@@ -291,8 +299,15 @@ function renderSummary() {
   const max = Math.max(1, ...Object.values(counts));
   const lv = live();
   const tfCount = lv.files.filter(f => f.name.endsWith('.tf')).length;
+  const resCount = lv.files.reduce((n, f) => n + (f.content.match(/^resource\s+"/gm) || []).length, 0);
   const recs = recommendations();
-  const needed = new Set(state.sel.flatMap(id => SVC[id].deps));
+  const needed = new Set(state.sel.flatMap(depsFor));
+  // Building blocks of the Backup and Monitoring services, ticked when they appear in the generated code.
+  const comps = Object.entries(COMPONENTS).filter(([id]) => isSel(id)).map(([id, list]) => {
+    const code = lv.files.filter(f => f.svc === id).map(f => f.content).join('\n');
+    const got = list.filter(([t]) => new RegExp(`^resource\\s+"${t}"`, 'm').test(code));
+    return { id, got };
+  });
   const v = state.gen ? validation() : null;
   const vErr = v ? Object.values(v).reduce((n, c) => n + c.items.filter(i => i.level === 'error').length, 0) : 0;
   const vWarn = v ? Object.values(v).reduce((n, c) => n + c.items.filter(i => i.level === 'warn').length, 0) : 0;
@@ -310,6 +325,7 @@ function renderSummary() {
     </div>
     <dl class="kv">
       <dt>Terraform files</dt><dd>${tfCount}</dd>
+      <dt>Terraform resources</dt><dd>${resCount}</dd>
       <dt>Estimated complexity</dt><dd>${complexity()}</dd>
       <dt title="Snapshot taken when this dashboard was built. The constraint in providers.tf decides what terraform init installs.">Latest hashicorp/aws seen</dt><dd>${extLink('https://registry.terraform.io/providers/hashicorp/aws/latest', 'v' + PROVIDER_SNAPSHOT.latestSeen)}</dd>
       <dt>Static checks</dt><dd>${!v ? '<span style="color:var(--muted);font-weight:400">after generate</span>' : vErr ? `<span style="color:var(--err)">${vErr} error${vErr > 1 ? 's' : ''}</span>` : vWarn ? `<span style="color:var(--warn)">${vWarn} warning${vWarn > 1 ? 's' : ''}</span>` : '<span style="color:var(--ok)">passing</span>'}</dd>
@@ -321,6 +337,10 @@ function renderSummary() {
         return `<li><span class="mark ${s ? 'ok' : n ? 'warn' : 'off'}" aria-hidden="true">${s ? '✓' : n ? '!' : ''}</span>${l}<span class="hint" style="margin-left:auto">${s ? 'included' : n ? 'suggested' : 'not used'}</span></li>`;
       }).join('')}</ul>
     </div>
+    ${comps.map(({ id, got }) => `<div>
+      <p class="sec-title">${esc(CATS[SVC[id].cat].label)}: ${esc(SVC[id].name)}</p>
+      ${got.length ? `<ul class="foundation">${got.map(([, l]) => `<li><span class="mark ok" aria-hidden="true">✓</span>${esc(l)}</li>`).join('')}</ul>` : '<p class="hint">Nothing turned on yet. Configure the service to add components.</p>'}
+    </div>`).join('')}
     ${recs.length ? `<div class="recs" id="recs">
       <p class="sec-title" style="margin:0;color:var(--ink)">Recommended dependencies</p>
       <p class="hint">Nothing is added until you confirm. Untick anything you already have; the generated code then asks for its ID as a variable instead.</p>
@@ -333,6 +353,7 @@ function renderSummary() {
     </div>
     <div class="actions">
       <button class="btn primary" id="genBtnSide">${state.gen && !isStale() ? 'Regenerate Terraform' : 'Generate Terraform'}</button>
+      <button class="btn" id="valBtnSide" ${state.sel.length ? '' : 'disabled'} title="Generate if needed, then open the static checks. These are not terraform validate.">Static checks</button>
       <button class="btn" id="zipBtnSide" ${state.gen ? '' : 'disabled'}>${IC.dl} Download ZIP</button>
       <button class="btn ghost danger" id="resetBtnSide">Reset project</button>
     </div>`;
@@ -350,6 +371,11 @@ function renderSummary() {
   $$('[data-cfg]', el).forEach(b => b.onclick = () => openConfig(b.dataset.cfg));
   $$('[data-rm]', el).forEach(b => b.onclick = () => toggle(b.dataset.rm));
   $('#genBtnSide', el).onclick = generate;
+  $('#valBtnSide', el).onclick = () => {
+    if (!state.gen || isStale()) generate(); else setTab('files');
+    if (!state.gen) return;
+    setTimeout(() => { const vp = $('#valPanel'); if (vp) { vp.scrollIntoView({ block: 'start', behavior: 'smooth' }); vp.focus({ preventScroll: true }); } }, 80);
+  };
   $('#zipBtnSide', el).onclick = downloadZip;
   $('#resetBtnSide', el).onclick = resetAll;
 }
@@ -407,13 +433,14 @@ function renderServices(m) {
 }
 function card(s) {
   const sel = isSel(s.id);
-  const deps = s.deps.map(d => `${isSel(d) ? '<b>' + esc(SVC[d].name) + '</b>' : esc(SVC[d].name)}`).join(', ');
+  const dl = depsFor(s.id);
+  const deps = dl.map(d => `${isSel(d) ? '<b>' + esc(SVC[d].name) + '</b>' : esc(SVC[d].name)}`).join(', ');
   return `<article class="card ${sel ? 'selected' : ''}" aria-label="${esc(s.name)}">
     <div class="card-top">${glyph(s.id)}<div style="min-width:0"><h4>${esc(s.name)}</h4>
       <div class="meta"><span class="pill cat" style="background:${CAT_VAR[s.cat]}">${CATS[s.cat].label}</span><span class="pill ${s.diff}">${s.diff}</span></div></div></div>
     <div class="res" title="${esc(s.res.join(', '))}">${esc(s.res[0])}${s.res.length > 1 ? ` <span class="more">+${s.res.length - 1}</span>` : ''}</div>
     <p class="desc">${esc(s.desc)}</p>
-    ${s.deps.length ? `<div class="deps">Works with: ${deps}</div>` : '<div class="deps">No dependencies</div>'}
+    ${dl.length ? `<div class="deps">Works with: ${deps}</div>` : '<div class="deps">No dependencies</div>'}
     <div class="card-actions">
       ${extLink(docUrl(s.res[0]), 'Docs ' + IC.ext.replace('<svg', '<svg width="13" height="13"'), 'btn sm ghost" title="Terraform Registry: ' + esc(s.res[0]))}
       <span class="spacer"></span>
@@ -444,17 +471,24 @@ function closeDrawer() {
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
 }
 function fieldHtml(id, f, val) {
+  if (f.t === 'section') return `<p class="form-sec">${esc(f.l)}</p>`;
+  if (f.t === 'note') return `<p class="callout ${f.level === 'warn' ? 'warn' : ''}" role="note">${esc(f.l)}</p>`;
   const name = `f-${id}-${f.k}`;
   const hint = f.h ? `<p class="hint">${esc(f.h)}</p>` : '';
   if (f.t === 'bool') return `<div class="field wide"><label class="chk"><input type="checkbox" id="${name}" data-k="${f.k}" data-t="bool" ${val ? 'checked' : ''}>${esc(f.l)}</label>${hint}</div>`;
   if (f.t === 'select') return `<label class="field"><span>${esc(f.l)}</span><select class="inp" id="${name}" data-k="${f.k}" data-t="select">${f.o.map(o => `<option ${String(o) === String(val) ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>${hint}</label>`;
+  if (f.t === 'multi') {
+    const on = new Set(csv(val));
+    return `<div class="field wide"><span id="${name}-l">${esc(f.l)}</span><div class="multi" role="group" aria-labelledby="${name}-l">${f.o.map((o, i) => `<label class="chk"><input type="checkbox" id="${name}-${i}" data-k="${f.k}" data-t="multi" value="${esc(o)}" ${on.has(o) ? 'checked' : ''}>${esc(o)}</label>`).join('')}</div>${hint}</div>`;
+  }
   const wide = f.t === 'list' || String(val).length > 26;
   return `<label class="field ${wide ? 'wide' : ''}"><span>${esc(f.l)}</span><input class="inp mono" id="${name}" data-k="${f.k}" data-t="${f.t}" type="${f.t === 'number' ? 'number' : 'text'}" value="${esc(val)}" spellcheck="false">${hint}</label>`;
 }
+// Every file the service would generate with the current selection (several for multi-file services).
 function previewFor(id) {
   const ids = isSel(id) ? state.sel : [...state.sel, id];
   const p = generateProject(ids, state.cfg, state.g);
-  return p.files.find(f => f.svc === id);
+  return p.files.filter(f => f.svc === id);
 }
 function blocksOf(content) {
   const out = [];
@@ -476,23 +510,23 @@ function blocksOf(content) {
 }
 function openConfig(id) {
   const s = SVC[id];
-  const c = cfgOf(id);
   const sel = isSel(id);
   const html = `<div class="drawer-head">${glyph(id)}<div><h2 id="drawerTitle">${esc(s.name)} ${sel ? 'configuration' : ''}</h2>
       <p>${esc(s.desc)}</p><div class="meta" style="display:flex;gap:6px;margin-top:6px"><span class="pill cat" style="background:${CAT_VAR[s.cat]}">${CATS[s.cat].label}</span><span class="pill ${s.diff}">${s.diff}</span></div></div>
       <button class="icon-btn" data-close aria-label="Close panel">${IC.x}</button></div>
     <div class="drawer-body">
       <div class="box note"><h3>Common use case</h3><p style="margin:0;font-size:13.5px">${esc(s.use)}</p></div>
-      ${s.fields.length ? `<div><p class="sec-title">Settings</p><div class="form-grid" id="cfgForm">${s.fields.map(f => fieldHtml(id, f, c[f.k])).join('')}</div>
+      ${s.fields.length ? `<div><p class="sec-title">Settings</p><div class="form-grid" id="cfgForm"></div>
         <p class="hint" style="margin-top:10px">Project name, environment and region come from the summary panel and apply to every service. Each setting becomes a variable default in variables.tf.</p>
         ${Object.keys(state.cfg[id] || {}).length ? '<button class="btn sm ghost" id="cfgReset" style="margin-top:6px">Restore defaults</button>' : ''}</div>` : '<p class="hint">This service has no settings: it is wired to the other selected services automatically.</p>'}
-      ${s.deps.length ? `<div><p class="sec-title">Dependencies</p><ul class="foundation">${s.deps.map(d => `<li><span class="mark ${isSel(d) ? 'ok' : 'warn'}">${isSel(d) ? '✓' : '!'}</span>${esc(SVC[d].name)}<span class="hint" style="margin-left:auto">${isSel(d) ? 'selected, referenced directly' : 'not selected: an input variable or omitted'}</span></li>`).join('')}</ul>
-        ${s.deps.some(d => !isSel(d)) ? `<button class="btn sm" id="addDeps" style="margin-top:8px">Add ${s.deps.filter(d => !isSel(d)).map(d => esc(SVC[d].name)).join(', ')}</button>` : ''}</div>` : ''}
+      <div id="cfgDeps"></div>
       <div class="box"><h3><span class="source-tag reg">Terraform Registry</span>Resource documentation</h3>
         <ul class="links">${s.res.map(t => `<li>${extLink(docUrl(t), esc(t) + ' ' + IC.ext.replace('<svg', '<svg width="12" height="12"'))}</li>`).join('')}</ul>
         <p class="hint" style="margin-top:8px">Links open the live <code>latest</code> documentation for hashicorp/aws. The dashboard cannot fetch the Registry from inside this page, so it does not read argument lists at runtime.</p></div>
       <div class="box note"><h3><span class="source-tag asm">Assumptions</span>Made by this generator</h3><ul>${[...s.assume, 'Names are built from local.name_prefix, and every resource inherits the provider default_tags (Project, Environment, ManagedBy).'].map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>
-      <div><p class="sec-title"><span class="source-tag gen">Generated template</span>Preview of ${esc((state.g.layout === 'category' ? s.cat + '_' : '') + s.file)}.tf</p><div id="cfgPreview"></div></div>
+      ${s.guide.length ? `<div class="box"><h3><span class="source-tag asm">Guidance</span>Security and compliance</h3><ul>${s.guide.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+        <p class="hint" style="margin-top:8px">Educational recommendations, not an automatic compliance certification.</p></div>` : ''}
+      <div id="cfgPreview"></div>
     </div>
     <div class="drawer-foot">
       <button class="btn ${sel ? 'danger' : 'select'}" id="dSel">${sel ? 'Remove service' : 'Select service'}</button>
@@ -501,30 +535,58 @@ function openConfig(id) {
       <button class="btn primary" id="dGen">Generate Terraform</button>
     </div>`;
   openDrawer(html, d => {
+    const setVal = (k, v) => {
+      const f = s.fields.find(x => x.k === k);
+      state.cfg[id] = state.cfg[id] || {};
+      if (v === f.d) delete state.cfg[id][k]; else state.cfg[id][k] = v;
+      if (!Object.keys(state.cfg[id]).length) delete state.cfg[id];
+    };
+    const renderDeps = () => {
+      const box = $('#cfgDeps', d);
+      const deps = depsFor(id);
+      if (!deps.length) { box.innerHTML = ''; return; }
+      const missing = deps.filter(x => !isSel(x));
+      box.innerHTML = `<p class="sec-title">Dependencies</p><ul class="foundation">${deps.map(x => `<li><span class="mark ${isSel(x) ? 'ok' : 'warn'}">${isSel(x) ? '✓' : '!'}</span>${esc(SVC[x].name)}<span class="hint" style="margin-left:auto">${isSel(x) ? 'selected, referenced directly' : 'suggested: not selected, so an input variable or omitted'}</span></li>`).join('')}</ul>
+        ${missing.length ? `<button class="btn sm" id="addDeps" style="margin-top:8px">Add ${missing.map(x => esc(SVC[x].name)).join(', ')}</button>` : ''}`;
+      const ad = $('#addDeps', box); if (ad) ad.onclick = () => { if (!isSel(id)) state.sel.push(id); addRecommended(missing); openConfig(id); };
+    };
     const refresh = () => {
-      const f = previewFor(id);
+      renderDeps();
+      const fs = previewFor(id);
       const box = $('#cfgPreview', d);
       if (!box) return;
-      box.innerHTML = `<pre class="snippet code">${highlightHCL(f.content).html}</pre>
-        <ul class="res-list" style="margin-top:8px">${blocksOf(f.content).map((b, i) => `<li><span class="addr">${esc(b.addr)}</span><button class="btn sm ghost" data-learn="${i}">${IC.book} Learn</button></li>`).join('')}</ul>`;
-      const bl = blocksOf(f.content);
-      $$('[data-learn]', box).forEach(b => b.onclick = () => openLearn(bl[+b.dataset.learn].type, bl[+b.dataset.learn], f.name, () => openConfig(id)));
+      const bl = fs.flatMap(f => blocksOf(f.content).map(b => Object.assign(b, { file: f.name })));
+      box.innerHTML = `<p class="sec-title"><span class="source-tag gen">Generated template</span>Preview of ${fs.map(f => esc(f.name)).join(', ')}</p>
+        ${fs.map(f => `${fs.length > 1 ? `<p class="hint mono" style="margin:12px 0 6px">${esc(f.name)}</p>` : ''}<pre class="snippet code">${highlightHCL(f.content).html}</pre>`).join('')}
+        <ul class="res-list" style="margin-top:8px">${bl.map((b, i) => `<li><span class="addr">${esc(b.addr)}</span><button class="btn sm ghost" data-learn="${i}">${IC.book} Learn</button></li>`).join('')}</ul>`;
+      $$('[data-learn]', box).forEach(b => b.onclick = () => { const x = bl[+b.dataset.learn]; openLearn(x.type, x, x.file, () => openConfig(id)); });
     };
-    refresh();
     const later = debounce(() => { refresh(); changed(); }, 250);
-    $$('#cfgForm [data-k]', d).forEach(inp => {
-      inp.addEventListener(inp.dataset.t === 'bool' || inp.dataset.t === 'select' ? 'change' : 'input', () => {
-        const f = s.fields.find(x => x.k === inp.dataset.k);
-        let v = inp.dataset.t === 'bool' ? inp.checked : inp.value;
-        if (inp.dataset.t === 'number') { v = Number(inp.value); if (inp.value === '' || isNaN(v)) return; }
-        state.cfg[id] = state.cfg[id] || {};
-        if (v === f.d) delete state.cfg[id][f.k]; else state.cfg[id][f.k] = v;
-        if (!Object.keys(state.cfg[id]).length) delete state.cfg[id];
-        persist(); later();
+    // Fields with a "when" condition appear or disappear as other settings change, so the form re-renders on toggles.
+    const renderForm = focusId => {
+      const form = $('#cfgForm', d);
+      if (!form) return;
+      const c = cfgOf(id);
+      form.innerHTML = s.fields.filter(f => !f.when || f.when(c, isSel)).map(f => fieldHtml(id, f, f.k ? c[f.k] : null)).join('');
+      $$('[data-k]', form).forEach(inp => {
+        const t = inp.dataset.t;
+        inp.addEventListener(t === 'bool' || t === 'select' || t === 'multi' ? 'change' : 'input', () => {
+          const f = s.fields.find(x => x.k === inp.dataset.k);
+          let v = t === 'bool' ? inp.checked : inp.value;
+          if (t === 'number') { v = Number(inp.value); if (inp.value === '' || isNaN(v)) return; }
+          if (t === 'multi') v = f.o.filter(o => $$(`[data-k="${f.k}"]`, form).some(b => b.checked && b.value === o)).join(', ');
+          setVal(f.k, v);
+          if (t === 'select' && f.presets && f.presets[v]) for (const [k2, v2] of Object.entries(f.presets[v])) setVal(k2, v2);
+          persist();
+          if (t === 'bool' || t === 'select' || t === 'multi') renderForm(inp.id);
+          later();
+        });
       });
-    });
+      if (focusId) { const el = document.getElementById(focusId); if (el) el.focus(); }
+    };
+    renderForm();
+    refresh();
     const cr = $('#cfgReset', d); if (cr) cr.onclick = () => { delete state.cfg[id]; changed(); openConfig(id); };
-    const ad = $('#addDeps', d); if (ad) ad.onclick = () => { if (!isSel(id)) state.sel.push(id); addRecommended(s.deps); openConfig(id); };
     $('#dSel', d).onclick = () => { if (isSel(id)) { toggle(id); closeDrawer(); } else { state.sel.push(id); changed(); openConfig(id); } };
     $('#dGen', d).onclick = () => { if (!isSel(id)) state.sel.push(id); generate(); };
   });
@@ -553,6 +615,7 @@ function conceptRows(block) {
 }
 function openLearn(type, block, fileName, back) {
   const info = RES_INFO[type];
+  const g = RES_GUIDE[type];
   const pure = type.replace(/^data\./, '');
   const html = `<div class="drawer-head"><div><h2 id="drawerTitle" class="mono" style="font-size:17px">${esc(type)}</h2><p>${type.startsWith('data.') ? 'Data source' : 'Terraform resource'}${fileName ? ' in ' + esc(fileName) : ''}</p></div>
       <button class="icon-btn" data-close aria-label="Close panel">${IC.x}</button></div>
@@ -562,6 +625,11 @@ function openLearn(type, block, fileName, back) {
       ${info ? `<div><p class="sec-title">Important arguments <span class="hint">(you set these)</span></p><div class="chips">${info[1].map(a => `<span class="chip">${esc(a)}</span>`).join('')}</div></div>
       <div><p class="sec-title">Important attributes <span class="hint">(AWS returns these)</span></p><div class="chips">${info[2].map(a => `<span class="chip">${esc(a)}</span>`).join('')}</div></div>
       <p class="hint" style="margin:0">A commonly used subset. The Registry page lists every argument and attribute for the current provider version.</p>` : ''}
+      ${g ? `<div><p class="sec-title">Why do we need it?</p><p style="margin:0">${esc(g.why)}</p></div>
+      <div><p class="sec-title">Dependencies</p><p style="margin:0">${esc(g.deps)}</p></div>
+      <div><p class="sec-title">How it fits in AWS</p><p style="margin:0">${esc(g.arch)}</p></div>
+      <div><p class="sec-title">Common mistakes</p><ul style="margin:0;padding-left:18px">${g.mistakes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+      <div><p class="sec-title">Terraform example</p><pre class="snippet code">${highlightHCL(g.example).html}</pre></div>` : ''}
       <div>${extLink(docUrl(type), 'Open Terraform Registry documentation ' + IC.ext.replace('<svg', '<svg width="13" height="13"'), 'btn sm')}</div>
       ${block ? `<div><p class="sec-title">Your generated block</p><pre class="snippet code">${highlightHCL(block.text).html}</pre></div>
       <div><p class="sec-title">Terraform concepts, using this block</p>${conceptRows(block)}</div>` : `<div class="box note"><h3>Terraform concepts</h3><p class="hint">Generate a project that uses <code>${esc(pure)}</code> and open Learn from the file view to see each concept explained against your own code.</p></div>`}

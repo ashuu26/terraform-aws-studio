@@ -53,17 +53,32 @@ const tags = (nameExpr, extra) => {
 const csv = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
 
 /* ---------- Service definitions ----------
-   field: { k, l, t: text|number|bool|select|list, d, o, h }
+   field: { k, l, t: text|number|bool|select|list|multi, d, o, h, when, presets }
+     multi    checkboxes; the value is a comma-separated string of the ticked options.
+     when     (config, has) => bool; hides the field in the drawer when false.
+     presets  select only: { option: { otherKey: value } } applied when that option is picked.
+   layout-only entries (no k): { t: 'section', l } and { t: 'note', l, level: 'info'|'warn' }.
+   service extras:
+     suggest(config, has)  extra dependency IDs that depend on the configuration.
+     guide                 educational security and compliance notes shown in the drawer.
+     gen(c, x)             returns HCL for <file>.tf, or [{ stem, title, body }] for several files.
 */
 const CATS = {
   networking: { label: 'Networking', color: 'net' },
   compute: { label: 'Compute', color: 'cmp' },
   database: { label: 'Database', color: 'db' },
   storage: { label: 'Storage', color: 'sto' },
+  backup: { label: 'Backup', color: 'bkp' },
+  monitoring: { label: 'Monitoring', color: 'mon' },
 };
 
 const SERVICES = [];
-function S(def) { def.fields = def.fields || []; def.deps = def.deps || []; def.kw = def.kw || ''; def.assume = def.assume || []; SERVICES.push(def); }
+function S(def) { def.fields = def.fields || []; def.deps = def.deps || []; def.kw = def.kw || ''; def.assume = def.assume || []; def.guide = def.guide || []; SERVICES.push(def); }
+// Static deps plus the ones a service suggests for its current configuration.
+function depsOf(id, cfg, has) {
+  const s = SVC[id];
+  return [...new Set([...s.deps, ...(s.suggest ? s.suggest(cfg, has) : [])])].filter(d => d !== id && SVC[d]);
+}
 
 /* ============================ NETWORKING ============================ */
 S({
@@ -1465,38 +1480,6 @@ S({
   },
 });
 S({
-  id: 'backup', name: 'AWS Backup', cat: 'storage', diff: 'Intermediate', file: 'backup',
-  res: ['aws_backup_vault', 'aws_backup_plan', 'aws_backup_selection', 'aws_iam_role'], deps: ['kms'], kw: 'backup vault plan retention',
-  desc: 'A vault, a daily plan and a selection that picks up your databases and file systems, plus anything tagged Backup=true.',
-  use: 'Central, policy-driven backups with retention you can audit.',
-  fields: [
-    { k: 'schedule', l: 'Schedule (cron, UTC)', t: 'text', d: 'cron(0 18 * * ? *)', h: '18:00 UTC is 02:00 in Kuala Lumpur and Singapore.' },
-    { k: 'retention', l: 'Retention (days)', t: 'number', d: 35 },
-  ],
-  gen(c, x) {
-    x.v('backup_schedule', 'string', 'Backup schedule as an AWS cron expression (UTC)', c.schedule);
-    x.v('backup_retention_days', 'number', 'Days to keep recovery points', Number(c.retention));
-    const arns = [];
-    for (const [id, r] of [['rds', 'main'], ['rds_postgres', 'postgres'], ['rds_mysql', 'mysql'], ['rds_sqlserver', 'sqlserver']]) if (x.has(id)) arns.push(`aws_db_instance.${r}.arn`);
-    if (x.has('aurora')) arns.push('aws_rds_cluster.main.arn');
-    if (x.has('dynamodb')) arns.push('aws_dynamodb_table.main.arn');
-    if (x.has('efs')) arns.push('aws_efs_file_system.main.arn');
-    if (x.has('ebs')) arns.push('aws_ebs_volume.data.arn');
-    const kms = x.kmsArn();
-    x.o('backup_vault_arn', 'aws_backup_vault.main.arn', 'ARN of the backup vault');
-    x.o('backup_plan_id', 'aws_backup_plan.main.id', 'ID of the backup plan');
-    return R('resource "aws_backup_vault" "main"', ['name = "${local.name_prefix}-vault"', kms ? 'kms_key_arn = ' + kms : null])
-      + '\n\n' + R('resource "aws_backup_plan" "main"', ['name = "${local.name_prefix}-daily"', '',
-        B('rule', ['rule_name = "daily"', 'target_vault_name = aws_backup_vault.main.name', 'schedule = var.backup_schedule', 'start_window = 60', 'completion_window = 180', '', B('lifecycle', ['delete_after = var.backup_retention_days'])])])
-      + '\n\n' + assumeDoc('backup', 'backup.amazonaws.com')
-      + '\n\n' + R('resource "aws_iam_role" "backup"', ['name_prefix = "${local.name_prefix}-backup-"', 'assume_role_policy = data.aws_iam_policy_document.backup_assume.json'])
-      + '\n\n' + R('resource "aws_iam_role_policy_attachment" "backup"', ['role = aws_iam_role.backup.name', 'policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"'])
-      + '\n\n' + R('resource "aws_backup_selection" "main"', ['name = "${local.name_prefix}-selection"', 'plan_id = aws_backup_plan.main.id', 'iam_role_arn = aws_iam_role.backup.arn',
-        arns.length ? 'resources = [\n' + arns.map(a => '  ' + a + ',').join('\n') + '\n]' : null, '',
-        B('selection_tag', ['type = "STRINGEQUALS"', 'key = "Backup"', 'value = "true"'])]);
-  },
-});
-S({
   id: 'kms', name: 'KMS Key', cat: 'storage', diff: 'Intermediate', file: 'kms',
   res: ['aws_kms_key', 'aws_kms_alias'], kw: 'kms encryption key cmk',
   desc: 'A customer managed key with rotation on. Other services pick it up automatically when selected.',
@@ -1505,8 +1488,536 @@ S({
   gen(c, x) {
     x.v('kms_deletion_window_days', 'number', 'Waiting period before a scheduled key deletion completes', Number(c.window), { condition: 'var.kms_deletion_window_days >= 7 && var.kms_deletion_window_days <= 30', error: 'The KMS deletion window must be 7 to 30 days.' });
     x.o('kms_key_arn', 'aws_kms_key.main.arn', 'ARN of the KMS key');
-    return R('resource "aws_kms_key" "main"', ['description = "${local.name_prefix} customer managed key"', 'enable_key_rotation = true', 'deletion_window_in_days = var.kms_deletion_window_days', '', tags(N('cmk'))])
+    // CloudWatch Logs can only use a customer managed key whose key policy allows the Logs service.
+    const cw = x.has('cloudwatch') ? x.cfgOf('cloudwatch') : null;
+    const logs = cw && cw.log_group && cw.log_kms;
+    let h = '';
+    if (logs) {
+      x.caller();
+      h = R('data "aws_iam_policy_document" "kms"', [
+        '# Keeps the default behaviour: the account administers the key through IAM.',
+        B('statement', ['sid = "AccountAdministration"', 'actions = ["kms:*"]', 'resources = ["*"]', '', B('principals', ['type = "AWS"', 'identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]'])]),
+        '',
+        '# Lets CloudWatch Logs in this Region encrypt log groups in this account.',
+        B('statement', ['sid = "AllowCloudWatchLogs"', 'actions = [\n  "kms:Encrypt*",\n  "kms:Decrypt*",\n  "kms:ReEncrypt*",\n  "kms:GenerateDataKey*",\n  "kms:Describe*",\n]', 'resources = ["*"]', '',
+          B('principals', ['type = "Service"', 'identifiers = ["logs.${var.aws_region}.amazonaws.com"]']), '',
+          B('condition', ['test = "ArnLike"', 'variable = "kms:EncryptionContext:aws:logs:arn"', 'values = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:*"]'])]),
+      ]) + '\n\n';
+    }
+    return h + R('resource "aws_kms_key" "main"', ['description = "${local.name_prefix} customer managed key"', 'enable_key_rotation = true', 'deletion_window_in_days = var.kms_deletion_window_days', logs ? 'policy = data.aws_iam_policy_document.kms.json' : null, '', tags(N('cmk'))])
       + '\n\n' + R('resource "aws_kms_alias" "main"', ['name = "alias/${local.name_prefix}"', 'target_key_id = aws_kms_key.main.key_id']);
+  },
+});
+
+/* ============================== BACKUP ============================== */
+// "By resource type" uses the wildcard ARN patterns from the AWS Backup developer guide.
+const BACKUP_TYPE_ARNS = {
+  EC2: 'arn:aws:ec2:*:*:instance/*', EBS: 'arn:aws:ec2:*:*:volume/*', RDS: 'arn:aws:rds:*:*:db:*', Aurora: 'arn:aws:rds:*:*:cluster:*',
+  DynamoDB: 'arn:aws:dynamodb:*:*:table/*', EFS: 'arn:aws:elasticfilesystem:*:*:file-system/*', S3: 'arn:aws:s3:::*',
+};
+const RDS_RES = [['rds', 'main'], ['rds_postgres', 'postgres'], ['rds_mysql', 'mysql'], ['rds_sqlserver', 'sqlserver']];
+// Selected services AWS Backup can protect, with the reference to their ARN. x only needs has().
+function backupTargets(x) {
+  const t = [];
+  for (const [id, r] of RDS_RES) if (x.has(id)) t.push({ id, type: 'RDS', arn: `aws_db_instance.${r}.arn` });
+  if (x.has('aurora')) t.push({ id: 'aurora', type: 'Aurora', arn: 'aws_rds_cluster.main.arn' });
+  if (x.has('dynamodb')) t.push({ id: 'dynamodb', type: 'DynamoDB', arn: 'aws_dynamodb_table.main.arn' });
+  if (x.has('efs')) t.push({ id: 'efs', type: 'EFS', arn: 'aws_efs_file_system.main.arn' });
+  if (x.has('ebs')) t.push({ id: 'ebs', type: 'EBS', arn: 'aws_ebs_volume.data.arn' });
+  if (x.has('ec2')) t.push({ id: 'ec2', type: 'EC2', arn: 'aws_instance.main.arn' });
+  if (x.has('s3')) t.push({ id: 's3', type: 'S3', arn: 'aws_s3_bucket.main.arn' });
+  return t;
+}
+const hclList = items => items.length ? '[\n' + items.map(a => '  ' + a + ',').join('\n') + '\n]' : '[]';
+const onLock = c => c.lock;
+const bySelTags = c => c.selection === 'Selected services and tags' || c.selection === 'By resource tags';
+
+S({
+  id: 'backup', name: 'AWS Backup', cat: 'backup', diff: 'Intermediate', file: 'backup_vault',
+  res: ['aws_backup_vault', 'aws_backup_plan', 'aws_backup_selection', 'aws_backup_vault_lock_configuration', 'aws_backup_vault_policy', 'aws_iam_role', 'aws_iam_role_policy_attachment', 'data.aws_iam_policy_document'],
+  kw: 'backup vault plan rule selection retention recovery point restore vault lock disaster recovery',
+  desc: 'Centralized backups for supported AWS resources: a vault, a plan with a scheduled rule, a resource selection and the IAM role AWS Backup uses.',
+  use: 'Central, policy-driven backups with retention you can audit, for databases, volumes, file systems and buckets.',
+  suggest: c => (c.encryption === 'AWS managed key' ? [] : ['kms']),
+  fields: [
+    { t: 'section', l: 'Backup vault' },
+    { k: 'vault_name', l: 'Vault name (after the name prefix)', t: 'text', d: 'vault', h: 'The vault is named local.name_prefix plus this, for example tf-learning-dev-vault.' },
+    { k: 'encryption', l: 'Encryption', t: 'select', d: 'Auto', o: ['Auto', 'AWS managed key', 'Customer managed KMS key'], h: 'Auto uses the KMS Key service when it is selected, otherwise the AWS managed key for AWS Backup. A customer managed key without the KMS Key service becomes an input variable.' },
+    { k: 'force_destroy', l: 'Let terraform destroy delete recovery points', t: 'bool', d: false, h: 'Handy while learning. Leave it off for real data: without it, a vault that still holds recovery points cannot be deleted.' },
+    { k: 'vault_policy', l: 'Deny deleting recovery points (vault access policy)', t: 'bool', d: false, h: 'Adds aws_backup_vault_policy that denies DeleteRecoveryPoint and UpdateRecoveryPointLifecycle to every principal. Lifecycle expiry by AWS Backup still works.' },
+    { t: 'section', l: 'Backup plan and rule' },
+    { k: 'plan_name', l: 'Plan name (after the name prefix)', t: 'text', d: 'backup-plan' },
+    { k: 'rule_name', l: 'Rule name', t: 'text', d: 'daily-backup' },
+    { k: 'schedule', l: 'Schedule (cron)', t: 'text', d: 'cron(0 18 * * ? *)', h: 'Evaluated in the time zone below. 18:00 UTC is 02:00 in Kuala Lumpur and Singapore.' },
+    { k: 'timezone', l: 'Schedule time zone', t: 'text', d: 'Etc/UTC', h: 'An IANA name such as Asia/Kuala_Lumpur. Sets schedule_expression_timezone.' },
+    { k: 'start_window', l: 'Start window (minutes)', t: 'number', d: 60, h: 'At least 60. A job that cannot start in this window is marked EXPIRED.' },
+    { k: 'completion_window', l: 'Completion window (minutes)', t: 'number', d: 180, h: 'At least 60 minutes longer than the start window.' },
+    { k: 'retention', l: 'Retention (days)', t: 'number', d: 35 },
+    { k: 'cold', l: 'Move recovery points to cold storage', t: 'bool', d: false, h: 'Only some resource types support cold storage. Retention must then be at least 90 days longer than the cold storage delay.' },
+    { k: 'cold_after', l: 'Cold storage after (days)', t: 'number', d: 30, when: c => c.cold },
+    { k: 'continuous', l: 'Enable continuous backup (point-in-time restore)', t: 'bool', d: false, h: 'Supported for RDS, Aurora, S3 and SAP HANA on EC2. Continuous recovery points are kept for 1 to 35 days and cannot move to cold storage.' },
+    { k: 'copy_vault_arn', l: 'Copy to another vault (ARN, optional)', t: 'text', d: '', h: 'Cross-Region or cross-account copies need a vault that already exists at the destination. Leave empty for no copy.' },
+    { t: 'note', level: 'info', l: 'Restores are not a Terraform resource: you start them on demand from the AWS Backup console, CLI or API. The role created here can be used for restores when "Allow restores" is on.' },
+    { t: 'section', l: 'Resource selection' },
+    { k: 'selection', l: 'Choose resources', t: 'select', d: 'Selected services and tags', o: ['Selected services and tags', 'By resource tags', 'By resource ARN', 'By resource type'], h: 'Selected services uses the ARNs of the databases, volumes, file systems, instances and buckets selected in this project.' },
+    { k: 'tag_key', l: 'Tag key', t: 'text', d: 'Backup', when: bySelTags },
+    { k: 'tag_value', l: 'Tag value', t: 'text', d: 'true', when: bySelTags },
+    { k: 'types', l: 'Resource types', t: 'multi', d: 'EBS, RDS, DynamoDB', o: Object.keys(BACKUP_TYPE_ARNS), when: c => c.selection === 'By resource type', h: 'Every resource of a ticked type in the Region is backed up, whatever its opt-in setting.' },
+    { k: 'role', l: 'IAM backup role', t: 'select', d: 'Create new', o: ['Create new', 'Use existing'] },
+    { k: 'restores', l: 'Allow restores with this role', t: 'bool', d: true, when: c => c.role !== 'Use existing', h: 'Attaches AWSBackupServiceRolePolicyForRestores next to the backup policy.' },
+    { t: 'section', l: 'Vault Lock' },
+    { k: 'lock', l: 'Enable Vault Lock', t: 'bool', d: false },
+    { t: 'note', level: 'warn', l: 'Vault Lock can have operational and compliance implications. Review retention requirements before applying. In compliance mode the lock becomes immutable after the grace period: nobody, including the root user, can remove it or shorten retention.', when: onLock },
+    { k: 'lock_mode', l: 'Lock mode', t: 'select', d: 'Governance', o: ['Governance', 'Compliance'], when: onLock, h: 'Governance mode omits changeable_for_days, so users with the right permissions can remove the lock.' },
+    { k: 'lock_min', l: 'Minimum retention (days)', t: 'number', d: 7, when: onLock },
+    { k: 'lock_max', l: 'Maximum retention (days)', t: 'number', d: 365, when: onLock },
+    { k: 'lock_changeable', l: 'Changeable for (days)', t: 'number', d: 3, when: c => c.lock && c.lock_mode === 'Compliance', h: 'Grace period before the compliance lock becomes immutable. At least 3 days.' },
+  ],
+  assume: [
+    'Vault and plan names are local.name_prefix plus the names you choose.',
+    '"By resource type" uses wildcard ARNs such as arn:aws:rds:*:*:db:*. They include every matching resource in the Region, whatever its opt-in setting.',
+    'Tag and service selections only pick up resource types that are opted in under AWS Backup settings for the Region. Those settings are account-wide (aws_backup_region_settings), so this generator does not change them.',
+    'S3 backups need versioning on the bucket; the role gets the S3 backup and restore policies when an S3 bucket can be selected.',
+  ],
+  guide: [
+    'Consider encryption with a customer managed AWS KMS key when you need to control and audit key use.',
+    'Review backup retention against your legal and business requirements before you pick numbers.',
+    'Consider cross-account backup (copy_action to a vault in another account) for resilience against account compromise.',
+    'Consider cross-Region backup (copy_action to a vault in another Region) for disaster recovery.',
+    'Review Vault Lock before enabling it: compliance mode cannot be undone after the grace period.',
+    'Follow least-privilege IAM practices: the AWS managed backup policies are broad, so scope a custom policy for production.',
+  ],
+  gen(c, x) {
+    const createRole = c.role !== 'Use existing';
+    const mode = c.selection;
+    const byTags = bySelTags(c);
+    const targets = backupTargets(x);
+    const types = csv(c.types).filter(t => BACKUP_TYPE_ARNS[t]);
+    const s3 = mode === 'By resource type' ? types.includes('S3') : x.has('s3');
+    const compliance = c.lock && c.lock_mode === 'Compliance';
+
+    x.v('backup_vault_name', 'string', 'Backup vault name, appended to local.name_prefix', c.vault_name, { condition: 'can(regex("^[A-Za-z0-9_-]{1,20}$", var.backup_vault_name))', error: 'backup_vault_name must be 1-20 letters, numbers, hyphens or underscores.' });
+    x.v('backup_vault_force_destroy', 'bool', 'Delete all recovery points when the vault is destroyed', c.force_destroy);
+    let kms = null;
+    if (c.encryption === 'Customer managed KMS key') kms = x.kmsArn() || x.v('backup_kms_key_arn', 'string', 'ARN of an existing customer managed KMS key for the vault (the KMS Key service is not selected)');
+    else if (c.encryption === 'Auto') kms = x.kmsArn();
+    x.v('backup_plan_name', 'string', 'Backup plan name, appended to local.name_prefix', c.plan_name);
+    x.v('backup_rule_name', 'string', 'Name of the scheduled backup rule', c.rule_name);
+    x.v('backup_schedule', 'string', 'Backup schedule as an AWS cron expression', c.schedule, { condition: 'can(regex("^cron\\\\(.+\\\\)$", var.backup_schedule))', error: 'backup_schedule must be a cron() expression, for example cron(0 18 * * ? *).' });
+    x.v('backup_schedule_timezone', 'string', 'IANA time zone the schedule is written in', c.timezone);
+    x.v('backup_start_window_minutes', 'number', 'Minutes a job may wait to start before it is marked EXPIRED', Number(c.start_window), { condition: 'var.backup_start_window_minutes >= 60', error: 'The start window must be at least 60 minutes.' });
+    x.v('backup_completion_window_minutes', 'number', 'Minutes a job may run before AWS Backup cancels it', Number(c.completion_window), { condition: 'var.backup_completion_window_minutes >= 120', error: 'The completion window must be at least 120 minutes (60 more than the minimum start window).' });
+    x.v('backup_retention_days', 'number', 'Days to keep recovery points', Number(c.retention), { condition: 'var.backup_retention_days >= 1', error: 'Retention must be at least 1 day.' });
+    if (c.cold) x.v('backup_cold_storage_after_days', 'number', 'Days before recovery points move to cold storage', Number(c.cold_after), { condition: 'var.backup_cold_storage_after_days >= 1', error: 'Cold storage must start after at least 1 day.' });
+    x.v('backup_enable_continuous', 'bool', 'Continuous backup for point-in-time restore (RDS, Aurora, S3, SAP HANA on EC2)', c.continuous);
+    if (c.copy_vault_arn) x.v('backup_copy_destination_vault_arn', 'string', 'ARN of the destination vault for copies in another Region or account', c.copy_vault_arn, { condition: 'can(regex("^arn:aws[a-z-]*:backup:", var.backup_copy_destination_vault_arn))', error: 'Use the ARN of an existing backup vault.' });
+    if (byTags) {
+      x.v('backup_selection_tag_key', 'string', 'Tag key that marks resources for backup', c.tag_key);
+      x.v('backup_selection_tag_value', 'string', 'Tag value that marks resources for backup', c.tag_value);
+    }
+    let resources = null;
+    if (mode === 'By resource type') resources = x.v('backup_resource_type_patterns', 'list(string)', 'Wildcard ARN patterns; every matching resource in the Region is backed up', types.map(t => BACKUP_TYPE_ARNS[t]));
+    else if (mode === 'By resource ARN') resources = targets.length ? hclList(targets.map(t => t.arn)) : x.v('backup_resource_arns', 'list(string)', 'ARNs of existing resources to back up', []);
+    else if (mode === 'Selected services and tags' && targets.length) resources = hclList(targets.map(t => t.arn));
+    const roleArn = createRole ? 'aws_iam_role.backup.arn' : x.v('backup_iam_role_arn', 'string', 'ARN of an existing IAM role that AWS Backup can assume');
+    if (c.lock) {
+      x.v('backup_lock_min_retention_days', 'number', 'Shortest retention a backup rule may set while the vault is locked', Number(c.lock_min), { condition: 'var.backup_lock_min_retention_days >= 1', error: 'Minimum retention must be at least 1 day.' });
+      x.v('backup_lock_max_retention_days', 'number', 'Longest retention a backup rule may set while the vault is locked', Number(c.lock_max), { condition: 'var.backup_lock_max_retention_days >= 1 && var.backup_lock_max_retention_days <= 36500', error: 'Maximum retention must be 1 to 36500 days.' });
+      if (compliance) x.v('backup_lock_changeable_for_days', 'number', 'Grace period before the compliance-mode lock becomes immutable', Number(c.lock_changeable), { condition: 'var.backup_lock_changeable_for_days >= 3', error: 'changeable_for_days must be at least 3.' });
+    }
+
+    x.o('backup_vault_name', 'aws_backup_vault.main.name', 'Name of the backup vault');
+    x.o('backup_vault_arn', 'aws_backup_vault.main.arn', 'ARN of the backup vault');
+    x.o('backup_plan_id', 'aws_backup_plan.main.id', 'ID of the backup plan');
+    x.o('backup_plan_arn', 'aws_backup_plan.main.arn', 'ARN of the backup plan');
+    x.o('backup_selection_id', 'aws_backup_selection.main.id', 'ID of the backup selection');
+    if (createRole) x.o('backup_iam_role_arn', 'aws_iam_role.backup.arn', 'ARN of the role AWS Backup assumes');
+
+    x.note('Terraform manages the backup configuration, not individual recovery points or restore jobs. Start restores from the AWS Backup console, CLI or API.');
+    if (byTags) x.note(`Resources are protected only when they carry the tag ${c.tag_key}=${c.tag_value}${mode === 'Selected services and tags' && targets.length ? ', in addition to the selected services listed in resources' : ''}.`);
+
+    const files = [];
+    let vault = R('resource "aws_backup_vault" "main"', [
+      'name = "${local.name_prefix}-${var.backup_vault_name}"',
+      kms ? 'kms_key_arn = ' + kms : '# No kms_key_arn: AWS Backup encrypts recovery points with its AWS managed key.',
+      'force_destroy = var.backup_vault_force_destroy',
+    ]);
+    if (c.vault_policy) {
+      vault += '\n\n' + R('data "aws_iam_policy_document" "backup_vault"', [B('statement', [
+        'sid = "DenyRecoveryPointDeletion"', 'effect = "Deny"', 'actions = [\n  "backup:DeleteRecoveryPoint",\n  "backup:UpdateRecoveryPointLifecycle",\n]', 'resources = ["*"]', '',
+        B('principals', ['type = "AWS"', 'identifiers = ["*"]']),
+      ])]) + '\n\n' + R('resource "aws_backup_vault_policy" "main"', ['backup_vault_name = aws_backup_vault.main.name', 'policy = data.aws_iam_policy_document.backup_vault.json']);
+    }
+    files.push({ stem: 'backup_vault', title: 'Backup vault', desc: 'The encrypted container that stores recovery points' + (c.vault_policy ? ', and its access policy.' : '.'), body: vault });
+
+    files.push({ stem: 'backup_plan', title: 'Backup plan and rule', desc: 'When backups run, how long recovery points are kept and where copies go.', body: R('resource "aws_backup_plan" "main"', [
+      'name = "${local.name_prefix}-${var.backup_plan_name}"', '',
+      B('rule', [
+        'rule_name = var.backup_rule_name',
+        'target_vault_name = aws_backup_vault.main.name',
+        'schedule = var.backup_schedule',
+        'schedule_expression_timezone = var.backup_schedule_timezone',
+        'start_window = var.backup_start_window_minutes',
+        'completion_window = var.backup_completion_window_minutes',
+        'enable_continuous_backup = var.backup_enable_continuous',
+        '',
+        B('lifecycle', [c.cold ? 'cold_storage_after = var.backup_cold_storage_after_days' : null, 'delete_after = var.backup_retention_days']),
+        c.copy_vault_arn ? '' : null,
+        c.copy_vault_arn ? B('copy_action', ['destination_vault_arn = var.backup_copy_destination_vault_arn', '', B('lifecycle', ['delete_after = var.backup_retention_days'])]) : null,
+      ]),
+    ]) });
+
+    let sel = '';
+    if (createRole) {
+      const pols = [['backup', 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup']];
+      if (c.restores) pols.push(['backup_restores', 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores']);
+      if (s3) pols.push(['backup_s3', 'arn:aws:iam::aws:policy/AWSBackupServiceRolePolicyForS3Backup']);
+      if (s3 && c.restores) pols.push(['backup_s3_restore', 'arn:aws:iam::aws:policy/AWSBackupServiceRolePolicyForS3Restore']);
+      sel = assumeDoc('backup', 'backup.amazonaws.com')
+        + '\n\n' + R('resource "aws_iam_role" "backup"', ['name_prefix = "${local.name_prefix}-backup-"', 'description = "Role AWS Backup assumes to back up' + (c.restores ? ' and restore' : '') + ' resources"', 'assume_role_policy = data.aws_iam_policy_document.backup_assume.json'])
+        + pols.map(([n, arn]) => '\n\n' + R(`resource "aws_iam_role_policy_attachment" "${n}"`, ['role = aws_iam_role.backup.name', `policy_arn = "${arn}"`])).join('')
+        + '\n\n';
+    }
+    sel += R('resource "aws_backup_selection" "main"', [
+      'name = "${local.name_prefix}-selection"',
+      'plan_id = aws_backup_plan.main.id',
+      'iam_role_arn = ' + roleArn,
+      resources ? 'resources = ' + resources : null,
+      byTags ? '' : null,
+      byTags ? B('selection_tag', ['type = "STRINGEQUALS"', 'key = var.backup_selection_tag_key', 'value = var.backup_selection_tag_value']) : null,
+    ]);
+    files.push({ stem: 'backup_selection', title: 'Backup selection and IAM role', desc: 'Which resources the plan protects, and the role AWS Backup assumes to read them.', body: sel });
+
+    if (c.lock) files.push({ stem: 'backup_vault_lock', title: 'Vault Lock', desc: 'Retention limits enforced on the vault (' + (compliance ? 'compliance' : 'governance') + ' mode).', body: R('resource "aws_backup_vault_lock_configuration" "main"', [
+      'backup_vault_name = aws_backup_vault.main.name',
+      'min_retention_days = var.backup_lock_min_retention_days',
+      'max_retention_days = var.backup_lock_max_retention_days',
+      compliance ? 'changeable_for_days = var.backup_lock_changeable_for_days' : '# No changeable_for_days, so the lock is in governance mode and can be removed.',
+    ]) });
+    return files;
+  },
+});
+
+/* ============================ MONITORING ============================ */
+const LOG_RETENTION = [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653, 0];
+const CW_WIDGETS = ['EC2 CPU', 'EC2 Network', 'ALB Requests', 'ALB 5XX', 'RDS CPU', 'RDS Connections', 'Lambda Invocations', 'Lambda Errors', 'Lambda Duration', 'EKS CPU', 'EKS Memory', 'Backup Jobs', 'Application Errors', 'Log Events'];
+// Dimensions of a selected resource as [name, Terraform reference], or null when nothing suitable is selected.
+function cwDims(kind, x) {
+  if (kind === 'ec2') return x.has('ec2') ? ['InstanceId', 'aws_instance.main.id'] : x.has('asg') ? ['AutoScalingGroupName', 'aws_autoscaling_group.main.name'] : null;
+  if (kind === 'alb') return x.has('alb') ? ['LoadBalancer', 'aws_lb.app.arn_suffix'] : null;
+  if (kind === 'rds') { const r = RDS_RES.find(([id]) => x.has(id)); return r ? ['DBInstanceIdentifier', `aws_db_instance.${r[1]}.identifier`] : x.has('aurora') ? ['DBClusterIdentifier', 'aws_rds_cluster.main.cluster_identifier'] : null; }
+  if (kind === 'lambda') return x.has('lambda') ? ['FunctionName', 'aws_lambda_function.main.function_name'] : null;
+  if (kind === 'eks') return x.has('eks_cluster') ? ['ClusterName', 'aws_eks_cluster.main.name'] : null;
+  return null;
+}
+const CW_TARGET = {
+  'EC2 CPU': { kind: 'ec2', ns: 'AWS/EC2', metric: 'CPUUtilization', res: 'ec2_cpu_high', dim: 'InstanceId', v: 'cloudwatch_alarm_instance_id', vd: 'ID of the EC2 instance to watch (EC2 Instance is not selected)', svc: ['ec2', 'asg'] },
+  'ALB 5XX errors': { kind: 'alb', ns: 'AWS/ApplicationELB', metric: 'HTTPCode_ELB_5XX_Count', res: 'alb_5xx', dim: 'LoadBalancer', v: 'cloudwatch_alarm_load_balancer', vd: 'ARN suffix of the load balancer to watch, for example app/my-alb/0123456789abcdef', svc: ['alb'] },
+  'RDS CPU': { kind: 'rds', ns: 'AWS/RDS', metric: 'CPUUtilization', res: 'rds_cpu_high', dim: 'DBInstanceIdentifier', v: 'cloudwatch_alarm_db_instance_id', vd: 'Identifier of the RDS DB instance to watch', svc: ['rds', 'rds_postgres', 'rds_mysql', 'rds_sqlserver', 'aurora'] },
+  'Lambda errors': { kind: 'lambda', ns: 'AWS/Lambda', metric: 'Errors', res: 'lambda_errors', dim: 'FunctionName', v: 'cloudwatch_alarm_function_name', vd: 'Name of the Lambda function to watch', svc: ['lambda'] },
+  'Custom metric': { kind: null, res: 'custom_metric' },
+};
+const cwOn = k => c => c[k];
+const onLogGroup = cwOn('log_group');
+const onFilter = cwOn('metric_filter');
+const onAlarm = cwOn('alarm');
+const onCustom = c => c.alarm && c.alarm_target === 'Custom metric';
+const onBackup = (c, has) => has('backup');
+
+S({
+  id: 'cloudwatch', name: 'Amazon CloudWatch', cat: 'monitoring', diff: 'Intermediate', file: 'cloudwatch_log_group',
+  res: ['aws_cloudwatch_log_group', 'aws_cloudwatch_log_stream', 'aws_cloudwatch_log_metric_filter', 'aws_cloudwatch_metric_alarm', 'aws_cloudwatch_composite_alarm', 'aws_cloudwatch_dashboard', 'aws_cloudwatch_event_rule', 'aws_cloudwatch_event_target', 'aws_cloudwatch_log_resource_policy', 'aws_sns_topic', 'aws_sns_topic_policy', 'aws_sns_topic_subscription', 'aws_backup_vault_notifications', 'data.aws_iam_policy_document'],
+  kw: 'cloudwatch monitoring logs log group metrics alarm dashboard metric filter eventbridge events sns notification observability',
+  desc: 'Monitoring, logging, alarms and operational visibility: log groups, metric filters, alarms, a dashboard, EventBridge rules and SNS notifications.',
+  use: 'Seeing how your workload behaves, and being told when something breaks, including failed backup jobs.',
+  suggest(c, has) {
+    const out = [];
+    const t = CW_TARGET[c.alarm_target];
+    if (c.alarm && t && t.svc && !t.svc.some(has)) out.push(t.svc[0]);
+    if (c.log_group && c.log_kms) out.push('kms');
+    return out;
+  },
+  fields: [
+    { t: 'section', l: 'Log group' },
+    { k: 'log_group', l: 'Create a log group', t: 'bool', d: true },
+    { k: 'log_group_name', l: 'Log group name', t: 'text', d: '/aws/terraform/application', when: onLogGroup },
+    { k: 'retention', l: 'Retention (days)', t: 'select', d: '30', o: LOG_RETENTION.map(String), when: onLogGroup, h: '0 keeps logs forever. Long retention costs more; keep only what you need.' },
+    { k: 'log_class', l: 'Log class', t: 'select', d: 'STANDARD', o: ['STANDARD', 'INFREQUENT_ACCESS'], when: onLogGroup, h: 'Infrequent Access costs less to ingest but does not support metric filters.' },
+    { k: 'log_kms', l: 'Encrypt with the KMS Key service', t: 'bool', d: false, when: onLogGroup, h: 'Also adds a key policy statement so CloudWatch Logs in this Region can use the key.' },
+    { k: 'log_stream', l: 'Create a log stream', t: 'bool', d: false, when: onLogGroup, h: 'AWS services and the CloudWatch agent create their own streams. Create one only for a writer that expects it to exist.' },
+    { k: 'stream_name', l: 'Log stream name', t: 'text', d: 'app', when: c => c.log_group && c.log_stream },
+    { t: 'section', l: 'Log metric filter' },
+    { k: 'metric_filter', l: 'Turn matching log lines into a metric', t: 'bool', d: true },
+    { k: 'filter_pattern', l: 'Filter pattern', t: 'text', d: 'ERROR', when: onFilter },
+    { k: 'filter_namespace', l: 'Metric namespace', t: 'text', d: 'Application', when: onFilter },
+    { k: 'filter_metric', l: 'Metric name', t: 'text', d: 'ApplicationErrors', when: onFilter },
+    { k: 'filter_value', l: 'Metric value per match', t: 'text', d: '1', when: onFilter },
+    { k: 'filter_alarm', l: 'Alarm when the pattern matches', t: 'bool', d: true, when: onFilter },
+    { t: 'section', l: 'Metric alarm' },
+    { k: 'alarm', l: 'Create a metric alarm', t: 'bool', d: true },
+    { k: 'alarm_target', l: 'What to watch', t: 'select', d: 'EC2 CPU', o: Object.keys(CW_TARGET), when: onAlarm, h: 'Dimensions reference the selected service directly. When it is not selected they become input variables.',
+      presets: {
+        'EC2 CPU': { alarm_name: 'high-cpu', statistic: 'Average', threshold: 80, comparison: 'GreaterThanThreshold', alarm_desc: 'EC2 CPU utilization is high' },
+        'ALB 5XX errors': { alarm_name: 'alb-5xx', statistic: 'Sum', threshold: 10, comparison: 'GreaterThanThreshold', alarm_desc: 'The load balancer is returning 5XX errors' },
+        'RDS CPU': { alarm_name: 'rds-high-cpu', statistic: 'Average', threshold: 80, comparison: 'GreaterThanThreshold', alarm_desc: 'RDS CPU utilization is high' },
+        'Lambda errors': { alarm_name: 'lambda-errors', statistic: 'Sum', threshold: 0, comparison: 'GreaterThanThreshold', alarm_desc: 'The Lambda function reported errors' },
+        'Custom metric': { alarm_name: 'custom-metric', statistic: 'Average', alarm_desc: 'A custom metric crossed its threshold' },
+      } },
+    { k: 'alarm_namespace', l: 'Namespace', t: 'text', d: 'Custom/Application', when: onCustom },
+    { k: 'alarm_metric', l: 'Metric name', t: 'text', d: 'RequestLatency', when: onCustom },
+    { k: 'alarm_dim', l: 'Dimension name (optional)', t: 'text', d: '', when: onCustom, h: 'Its value becomes an input variable, never a hard-coded ID.' },
+    { k: 'alarm_name', l: 'Alarm name (after the name prefix)', t: 'text', d: 'high-cpu', when: onAlarm },
+    { k: 'statistic', l: 'Statistic', t: 'select', d: 'Average', o: ['Average', 'Sum', 'Minimum', 'Maximum', 'SampleCount'], when: onAlarm, h: 'Use Sum for counts such as 5XX responses and Lambda errors.' },
+    { k: 'period', l: 'Period (seconds)', t: 'number', d: 300, when: onAlarm },
+    { k: 'eval', l: 'Evaluation periods', t: 'number', d: 2, when: onAlarm },
+    { k: 'threshold', l: 'Threshold', t: 'number', d: 80, when: onAlarm },
+    { k: 'comparison', l: 'Comparison', t: 'select', d: 'GreaterThanThreshold', o: ['GreaterThanThreshold', 'GreaterThanOrEqualToThreshold', 'LessThanThreshold', 'LessThanOrEqualToThreshold'], when: onAlarm },
+    { k: 'missing', l: 'Treat missing data', t: 'select', d: 'notBreaching', o: ['missing', 'ignore', 'breaching', 'notBreaching'], when: onAlarm },
+    { k: 'alarm_desc', l: 'Alarm description', t: 'text', d: 'EC2 CPU utilization is high', when: onAlarm },
+    { k: 'composite', l: 'Composite alarm that fires when any alarm fires', t: 'bool', d: false, h: 'Generated only when there are at least two metric alarms (the metric alarm plus the metric filter alarm).' },
+    { t: 'section', l: 'Dashboard' },
+    { k: 'dashboard', l: 'Create a dashboard', t: 'bool', d: true },
+    { k: 'dashboard_name', l: 'Dashboard name (after the name prefix)', t: 'text', d: 'monitoring', when: cwOn('dashboard') },
+    { k: 'widgets', l: 'Widgets', t: 'multi', d: CW_WIDGETS.join(', '), o: CW_WIDGETS, when: cwOn('dashboard'), h: 'Widgets for services that are not selected are skipped, so the dashboard follows your selection.' },
+    { t: 'section', l: 'Notifications and events' },
+    { k: 'sns', l: 'SNS topic for alarm and event notifications', t: 'bool', d: true },
+    { k: 'email', l: 'Email subscription (optional)', t: 'text', d: '', when: cwOn('sns'), h: 'Becomes var.cloudwatch_alerts_email. AWS emails a confirmation link and nothing is delivered until it is confirmed.' },
+    { k: 'ec2_events', l: 'EventBridge rule for EC2 stop and terminate events', t: 'bool', d: false, h: 'Generated when EC2 Instance or Auto Scaling Group is selected.' },
+    { t: 'section', l: 'AWS Backup monitoring', when: onBackup },
+    { t: 'note', level: 'info', l: 'Select AWS Backup as well to add backup job and vault monitoring here.', when: (c, has) => !has('backup') },
+    { k: 'bk_failed', l: 'Backup job failure monitoring', t: 'bool', d: true, when: onBackup, h: 'FAILED, ABORTED and EXPIRED backup jobs in this vault.' },
+    { k: 'bk_completed', l: 'Backup job completion monitoring', t: 'bool', d: false, when: onBackup },
+    { k: 'bk_vault', l: 'Backup vault monitoring (vault notifications to SNS)', t: 'bool', d: false, when: onBackup, h: 'Restore, copy and recovery point events sent straight from the vault. Needs the SNS topic.' },
+    { k: 'bk_eventbridge', l: 'Route backup job events through EventBridge', t: 'bool', d: true, when: onBackup, h: 'Off: job events use vault notifications instead, which need the SNS topic.' },
+  ],
+  assume: [
+    'Alarm dimensions reference the selected EC2 instance, Auto Scaling group, load balancer, database or function. When none is selected, the dimension value becomes an input variable.',
+    'EventBridge targets the SNS topic when it is enabled, otherwise a /aws/events/ log group with the resource policy EventBridge needs.',
+    'The SNS topic is not KMS-encrypted: publishing from EventBridge, CloudWatch alarms and AWS Backup to an encrypted topic needs extra key policy statements.',
+    'EKS widgets read Container Insights metrics, which appear only after the CloudWatch Observability add-on is installed in the cluster.',
+  ],
+  guide: [
+    'Avoid unnecessarily long log retention: it costs money and keeps data you may not need.',
+    'Encrypt sensitive logs with a customer managed KMS key where required.',
+    'Never log credentials, tokens or other secrets; metric filters and dashboards can expose log content.',
+    'Set alarm thresholds from real baselines so alarms stay meaningful, and test that notifications arrive.',
+    'Apply least-privilege permissions: the SNS topic policy here only lets the services that publish to it do so.',
+  ],
+  gen(c, x) {
+    const files = [];
+    const backup = x.has('backup');
+    const sns = !!c.sns;
+    const snsArn = 'aws_sns_topic.alerts.arn';
+    const alarmActions = sns ? ['', `alarm_actions = [${snsArn}]`, `ok_actions = [${snsArn}]`] : [];
+    const alarms = [];
+
+    // ---- log group, stream and metric filter
+    let logs = '';
+    if (c.log_group) {
+      const kms = c.log_kms ? x.kmsArn() : null;
+      x.v('cloudwatch_log_group_name', 'string', 'Name of the application log group', c.log_group_name, { condition: 'length(var.cloudwatch_log_group_name) >= 1 && length(var.cloudwatch_log_group_name) <= 512', error: 'Log group names are 1 to 512 characters.' });
+      x.v('cloudwatch_log_retention_days', 'number', 'Days to keep log events (0 keeps them forever)', Number(c.retention), { condition: `contains([${LOG_RETENTION.join(', ')}], var.cloudwatch_log_retention_days)`, error: 'Use a retention value CloudWatch Logs supports, such as 7, 14, 30, 90 or 365.' });
+      x.v('cloudwatch_log_group_class', 'string', 'STANDARD or INFREQUENT_ACCESS', c.log_class, { condition: 'contains(["STANDARD", "INFREQUENT_ACCESS"], var.cloudwatch_log_group_class)', error: 'cloudwatch_log_group_class must be STANDARD or INFREQUENT_ACCESS.' });
+      x.o('cloudwatch_log_group_name', 'aws_cloudwatch_log_group.app.name', 'Name of the application log group');
+      x.o('cloudwatch_log_group_arn', 'aws_cloudwatch_log_group.app.arn', 'ARN of the application log group');
+      if (c.log_kms && !kms) x.note('Log group encryption was requested but the KMS Key service is not selected, so the log group uses CloudWatch Logs default encryption.');
+      logs = R('resource "aws_cloudwatch_log_group" "app"', [
+        'name = var.cloudwatch_log_group_name',
+        'retention_in_days = var.cloudwatch_log_retention_days',
+        'log_group_class = var.cloudwatch_log_group_class',
+        kms ? 'kms_key_id = ' + kms : null,
+      ]);
+      if (c.log_stream) {
+        x.v('cloudwatch_log_stream_name', 'string', 'Name of the log stream', c.stream_name, { condition: '!strcontains(var.cloudwatch_log_stream_name, ":")', error: 'Log stream names cannot contain a colon.' });
+        logs += '\n\n' + R('resource "aws_cloudwatch_log_stream" "app"', ['name = var.cloudwatch_log_stream_name', 'log_group_name = aws_cloudwatch_log_group.app.name']);
+      }
+    }
+    if (c.metric_filter) {
+      const lg = c.log_group ? 'aws_cloudwatch_log_group.app.name' : x.v('cloudwatch_filter_log_group_name', 'string', 'Existing log group the metric filter reads (no log group is created here)');
+      x.v('cloudwatch_filter_pattern', 'string', 'CloudWatch Logs filter pattern', c.filter_pattern);
+      x.v('cloudwatch_filter_metric_namespace', 'string', 'Namespace the filter publishes its metric to', c.filter_namespace);
+      x.v('cloudwatch_filter_metric_name', 'string', 'Name of the metric the filter publishes', c.filter_metric);
+      x.v('cloudwatch_filter_metric_value', 'string', 'Value published for each matching log event', String(c.filter_value));
+      logs += (logs ? '\n\n' : '') + R('resource "aws_cloudwatch_log_metric_filter" "app_errors"', [
+        'name = "${local.name_prefix}-application-errors"',
+        'log_group_name = ' + lg,
+        'pattern = var.cloudwatch_filter_pattern',
+        '',
+        '# default_value = "0" publishes 0 when nothing matches, which keeps the metric continuous for alarms.',
+        B('metric_transformation', ['name = var.cloudwatch_filter_metric_name', 'namespace = var.cloudwatch_filter_metric_namespace', 'value = var.cloudwatch_filter_metric_value', 'default_value = "0"']),
+      ]);
+    }
+    if (logs) files.push({ stem: 'cloudwatch_log_group', title: 'Logs', desc: 'Where application logs go, and the metric filter that counts matching lines.', body: logs });
+
+    // ---- metric alarms
+    let alarmTxt = '';
+    if (c.alarm) {
+      const t = CW_TARGET[c.alarm_target] || CW_TARGET['EC2 CPU'];
+      let ns, metric, dim = null;
+      if (t.kind) {
+        ns = hq(t.ns); metric = hq(t.metric);
+        dim = cwDims(t.kind, x) || [t.dim, x.v(t.v, 'string', t.vd)];
+      } else {
+        ns = x.v('cloudwatch_alarm_namespace', 'string', 'Namespace of the custom metric', c.alarm_namespace);
+        metric = x.v('cloudwatch_alarm_metric_name', 'string', 'Name of the custom metric', c.alarm_metric);
+        if (c.alarm_dim) dim = [c.alarm_dim, x.v('cloudwatch_alarm_dimension_value', 'string', `Value of the ${c.alarm_dim} dimension`)];
+      }
+      x.v('cloudwatch_alarm_name', 'string', 'Alarm name, appended to local.name_prefix', c.alarm_name);
+      x.v('cloudwatch_alarm_description', 'string', 'Description shown with the alarm', c.alarm_desc);
+      x.v('cloudwatch_alarm_statistic', 'string', 'Average, Sum, Minimum, Maximum or SampleCount', c.statistic, { condition: 'contains(["Average", "Sum", "Minimum", "Maximum", "SampleCount"], var.cloudwatch_alarm_statistic)', error: 'Use Average, Sum, Minimum, Maximum or SampleCount.' });
+      x.v('cloudwatch_alarm_period', 'number', 'Seconds in each evaluation period', Number(c.period), { condition: 'contains([10, 20, 30], var.cloudwatch_alarm_period) || var.cloudwatch_alarm_period % 60 == 0', error: 'The period must be 10, 20, 30 or a multiple of 60 seconds.' });
+      x.v('cloudwatch_alarm_evaluation_periods', 'number', 'Periods compared with the threshold before the alarm changes state', Number(c.eval), { condition: 'var.cloudwatch_alarm_evaluation_periods >= 1', error: 'Evaluate at least 1 period.' });
+      x.v('cloudwatch_alarm_threshold', 'number', 'Value the statistic is compared with', Number(c.threshold));
+      x.v('cloudwatch_alarm_comparison_operator', 'string', 'How the statistic is compared with the threshold', c.comparison, { condition: 'contains(["GreaterThanThreshold", "GreaterThanOrEqualToThreshold", "LessThanThreshold", "LessThanOrEqualToThreshold"], var.cloudwatch_alarm_comparison_operator)', error: 'Use one of the four static threshold comparison operators.' });
+      x.v('cloudwatch_alarm_treat_missing_data', 'string', 'missing, ignore, breaching or notBreaching', c.missing, { condition: 'contains(["missing", "ignore", "breaching", "notBreaching"], var.cloudwatch_alarm_treat_missing_data)', error: 'Use missing, ignore, breaching or notBreaching.' });
+      const key = dim && (/^[A-Za-z_][\w-]*$/.test(dim[0]) ? dim[0] : hq(dim[0]));
+      alarms.push(`aws_cloudwatch_metric_alarm.${t.res}`);
+      x.o('cloudwatch_alarm_arn', `aws_cloudwatch_metric_alarm.${t.res}.arn`, 'ARN of the metric alarm');
+      alarmTxt = R(`resource "aws_cloudwatch_metric_alarm" "${t.res}"`, [
+        'alarm_name = "${local.name_prefix}-${var.cloudwatch_alarm_name}"',
+        'alarm_description = var.cloudwatch_alarm_description',
+        'namespace = ' + ns,
+        'metric_name = ' + metric,
+        'statistic = var.cloudwatch_alarm_statistic',
+        'period = var.cloudwatch_alarm_period',
+        'evaluation_periods = var.cloudwatch_alarm_evaluation_periods',
+        'threshold = var.cloudwatch_alarm_threshold',
+        'comparison_operator = var.cloudwatch_alarm_comparison_operator',
+        'treat_missing_data = var.cloudwatch_alarm_treat_missing_data',
+        dim ? '' : null,
+        dim ? `dimensions = {\n  ${key} = ${dim[1]}\n}` : null,
+        ...alarmActions,
+      ]);
+    }
+    if (c.metric_filter && c.filter_alarm) {
+      alarms.push('aws_cloudwatch_metric_alarm.app_errors');
+      x.o('cloudwatch_app_errors_alarm_arn', 'aws_cloudwatch_metric_alarm.app_errors.arn', 'ARN of the alarm on the metric filter');
+      alarmTxt += (alarmTxt ? '\n\n' : '') + R('resource "aws_cloudwatch_metric_alarm" "app_errors"', [
+        'alarm_name = "${local.name_prefix}-application-errors"',
+        'alarm_description = "Log events matched the metric filter pattern"',
+        'namespace = var.cloudwatch_filter_metric_namespace',
+        'metric_name = var.cloudwatch_filter_metric_name',
+        'statistic = "Sum"',
+        'period = 300',
+        'evaluation_periods = 1',
+        'threshold = 1',
+        'comparison_operator = "GreaterThanOrEqualToThreshold"',
+        'treat_missing_data = "notBreaching"',
+        '# Metric filters publish without dimensions, so this alarm has none.',
+        ...alarmActions,
+      ]);
+    }
+    if (c.composite && alarms.length >= 2) {
+      x.o('cloudwatch_composite_alarm_arn', 'aws_cloudwatch_composite_alarm.any.arn', 'ARN of the composite alarm');
+      alarmTxt += '\n\n' + R('resource "aws_cloudwatch_composite_alarm" "any"', [
+        'alarm_name = "${local.name_prefix}-any-alarm"',
+        'alarm_description = "In ALARM when any of the metric alarms is in ALARM"',
+        'alarm_rule = ' + hq(alarms.map(a => 'ALARM(${' + a + '.alarm_name})').join(' OR ')).replace(/\$\$\{/g, '${'),
+        ...alarmActions,
+      ]);
+    } else if (c.composite) x.note('The composite alarm needs at least two metric alarms, so it was not generated. Turn on both the metric alarm and the metric filter alarm.');
+    if (alarmTxt) files.push({ stem: 'cloudwatch_alarm', title: 'Alarms', desc: 'Alarms that watch metrics and notify the SNS topic when they change state.', body: alarmTxt });
+
+    // ---- dashboard
+    if (c.dashboard) {
+      const want = new Set(csv(c.widgets));
+      const m = (ns, metric, d) => '[' + [hq(ns), hq(metric), ...(d ? [hq(d[0]), d[1]] : [])].join(', ') + ']';
+      const search = (id, metric, label) => `[{ expression = ${hq(`SEARCH(' Namespace="AWS/Backup" MetricName="${metric}" ', 'Sum')`)}, id = "${id}", label = "${label}" }]`;
+      const d = k => cwDims(k, x);
+      const W = {
+        'EC2 CPU': () => d('ec2') && ['EC2 CPU utilization (%)', 'Average', [m('AWS/EC2', 'CPUUtilization', d('ec2'))]],
+        'EC2 Network': () => d('ec2') && ['EC2 network (bytes)', 'Sum', [m('AWS/EC2', 'NetworkIn', d('ec2')), m('AWS/EC2', 'NetworkOut', d('ec2'))]],
+        'ALB Requests': () => d('alb') && ['ALB requests', 'Sum', [m('AWS/ApplicationELB', 'RequestCount', d('alb'))]],
+        'ALB 5XX': () => d('alb') && ['ALB 5XX errors', 'Sum', [m('AWS/ApplicationELB', 'HTTPCode_ELB_5XX_Count', d('alb'))]],
+        'RDS CPU': () => d('rds') && ['RDS CPU utilization (%)', 'Average', [m('AWS/RDS', 'CPUUtilization', d('rds'))]],
+        'RDS Connections': () => d('rds') && ['RDS connections', 'Average', [m('AWS/RDS', 'DatabaseConnections', d('rds'))]],
+        'Lambda Invocations': () => d('lambda') && ['Lambda invocations', 'Sum', [m('AWS/Lambda', 'Invocations', d('lambda'))]],
+        'Lambda Errors': () => d('lambda') && ['Lambda errors', 'Sum', [m('AWS/Lambda', 'Errors', d('lambda'))]],
+        'Lambda Duration': () => d('lambda') && ['Lambda duration (ms)', 'Average', [m('AWS/Lambda', 'Duration', d('lambda'))]],
+        'EKS CPU': () => d('eks') && ['EKS node CPU (%)', 'Average', [m('ContainerInsights', 'node_cpu_utilization', d('eks'))]],
+        'EKS Memory': () => d('eks') && ['EKS node memory (%)', 'Average', [m('ContainerInsights', 'node_memory_utilization', d('eks'))]],
+        'Backup Jobs': () => backup && ['AWS Backup jobs', 'Sum', [search('failed', 'NumberOfBackupJobsFailed', 'Failed'), search('completed', 'NumberOfBackupJobsCompleted', 'Completed')]],
+        'Application Errors': () => c.metric_filter && ['Application errors (metric filter)', 'Sum', ['[var.cloudwatch_filter_metric_namespace, var.cloudwatch_filter_metric_name]']],
+        'Log Events': () => c.log_group && ['Log events ingested', 'Sum', [m('AWS/Logs', 'IncomingLogEvents', ['LogGroupName', 'aws_cloudwatch_log_group.app.name'])]],
+      };
+      const list = [], skipped = [];
+      for (const k of CW_WIDGETS) if (want.has(k)) { const w = W[k](); if (w) list.push(w); else skipped.push(k); }
+      if (skipped.length) x.note(`Dashboard widgets skipped because their service is not selected: ${skipped.join(', ')}.`);
+      const widget = (props, i, type = 'metric', width = 12) => ['{', `  type = "${type}"`, `  x = ${(i % 2) * 12}`, `  y = ${Math.floor(i / 2) * 6}`, `  width = ${width}`, `  height = ${type === 'text' ? 3 : 6}`, '  properties = {', ...props.map(p => '    ' + p), '  }', '},'].join('\n');
+      const ws = list.length
+        ? list.map(([title, stat, metrics], i) => widget([`title = ${hq(title)}`, 'region = var.aws_region', `stat = "${stat}"`, 'period = 300', 'view = "timeSeries"', 'metrics = [', ...metrics.map(l => '  ' + l + ','), ']'], i))
+        : [widget(['markdown = "No metric widgets match the selected services yet. Select EC2, an ALB, RDS, Lambda, EKS or AWS Backup, or turn on the log group, then regenerate."'], 0, 'text', 24)];
+      x.v('cloudwatch_dashboard_name', 'string', 'Dashboard name, appended to local.name_prefix', c.dashboard_name, { condition: 'can(regex("^[A-Za-z0-9_-]{1,200}$", var.cloudwatch_dashboard_name))', error: 'Dashboard names use letters, numbers, hyphens and underscores.' });
+      x.o('cloudwatch_dashboard_arn', 'aws_cloudwatch_dashboard.main.dashboard_arn', 'ARN of the CloudWatch dashboard');
+      files.push({ stem: 'cloudwatch_dashboard', title: 'Dashboard', desc: 'A dashboard built from the selected services. jsonencode() turns the HCL object into the JSON CloudWatch expects, with Terraform references resolved at apply time.', body: R('resource "aws_cloudwatch_dashboard" "main"', [
+        'dashboard_name = "${local.name_prefix}-${var.cloudwatch_dashboard_name}"', '',
+        'dashboard_body = jsonencode({\n  widgets = [\n' + indentLines(ws.join('\n'), '    ') + '\n  ]\n})',
+      ]) });
+    }
+
+    // ---- EventBridge rules
+    const rules = [];
+    const jobs = backup && (c.bk_failed || c.bk_completed);
+    if (jobs && c.bk_eventbridge) {
+      const bk = (res, states, what) => rules.push({ res, desc: `AWS Backup jobs in this vault that ${what}`, pattern: ['source = ["aws.backup"]', '"detail-type" = ["Backup Job State Change"]', `detail = {\n  state = [${states.map(s => `"${s}"`).join(', ')}]\n  backupVaultName = [aws_backup_vault.main.name]\n}`] });
+      if (c.bk_failed) bk('backup_failed', ['FAILED', 'ABORTED', 'EXPIRED'], 'failed, were aborted or expired');
+      if (c.bk_completed) bk('backup_completed', ['COMPLETED'], 'completed');
+    }
+    if (c.ec2_events && (x.has('ec2') || x.has('asg'))) rules.push({ res: 'ec2_state', desc: x.has('ec2') ? 'The EC2 instance stopped or was terminated' : 'Any EC2 instance in the Region stopped or was terminated', pattern: ['source = ["aws.ec2"]', '"detail-type" = ["EC2 Instance State-change Notification"]', `detail = {\n  state = ["stopped", "terminated"]${x.has('ec2') ? '\n  "instance-id" = [aws_instance.main.id]' : ''}\n}`] });
+    else if (c.ec2_events) x.note('The EC2 state-change rule needs EC2 Instance or Auto Scaling Group selected, so it was not generated.');
+    if (rules.length) {
+      let ev = '# EventBridge was called CloudWatch Events, which is why its Terraform resources are named aws_cloudwatch_event_*.';
+      if (!sns) {
+        x.data('events_to_logs', R('data "aws_iam_policy_document" "events_to_logs"', [B('statement', ['sid = "EventBridgeToLogs"', 'actions = ["logs:CreateLogStream", "logs:PutLogEvents"]', 'resources = ["${aws_cloudwatch_log_group.events.arn}:*"]', '', B('principals', ['type = "Service"', 'identifiers = ["events.amazonaws.com", "delivery.logs.amazonaws.com"]'])])]));
+        ev += '\n\n' + R('resource "aws_cloudwatch_log_group" "events"', ['name = "/aws/events/${local.name_prefix}"', 'retention_in_days = 30'])
+          + '\n\n# EventBridge needs a resource policy on CloudWatch Logs before it can write events.\n' + R('resource "aws_cloudwatch_log_resource_policy" "events"', ['policy_name = "${local.name_prefix}-events-to-logs"', 'policy_document = data.aws_iam_policy_document.events_to_logs.json']);
+      }
+      for (const r of rules) {
+        ev += '\n\n' + R(`resource "aws_cloudwatch_event_rule" "${r.res}"`, ['name = "${local.name_prefix}-' + r.res.replace(/_/g, '-') + '"', `description = ${hq(r.desc)}`, 'state = "ENABLED"', '', 'event_pattern = jsonencode({\n' + indentLines(r.pattern.join('\n'), '  ') + '\n})'])
+          + '\n\n' + R(`resource "aws_cloudwatch_event_target" "${r.res}"`, [`rule = aws_cloudwatch_event_rule.${r.res}.name`, `target_id = "${sns ? 'sns' : 'logs'}"`, 'arn = ' + (sns ? snsArn : 'aws_cloudwatch_log_group.events.arn')]);
+      }
+      x.o('eventbridge_rule_arns', hclList(rules.map(r => `aws_cloudwatch_event_rule.${r.res}.arn`)), 'ARNs of the EventBridge rules');
+      files.push({ stem: 'eventbridge', title: 'EventBridge rules', desc: 'Rules that match service events and send them to ' + (sns ? 'the SNS topic.' : 'a CloudWatch log group.'), body: ev });
+    }
+
+    // ---- AWS Backup vault notifications
+    const vaultEvents = [];
+    if (backup && jobs && !c.bk_eventbridge) { if (c.bk_failed) vaultEvents.push('BACKUP_JOB_FAILED', 'BACKUP_JOB_EXPIRED'); if (c.bk_completed) vaultEvents.push('BACKUP_JOB_COMPLETED'); }
+    if (backup && c.bk_vault) vaultEvents.push('RESTORE_JOB_COMPLETED', 'RESTORE_JOB_FAILED', 'COPY_JOB_FAILED', 'RECOVERY_POINT_MODIFIED');
+    const notify = vaultEvents.length && sns;
+    if (vaultEvents.length && !sns) x.note('Backup vault notifications need the SNS topic, so they were not generated. Turn on the SNS topic or route job events through EventBridge.');
+
+    // ---- SNS topic
+    if (sns) {
+      const st = [];
+      const ruleArns = rules.map(r => `aws_cloudwatch_event_rule.${r.res}.arn`);
+      if (alarms.length) {
+        x.caller();
+        st.push(B('statement', ['sid = "AllowCloudWatchAlarms"', 'actions = ["sns:Publish"]', 'resources = [aws_sns_topic.alerts.arn]', '', B('principals', ['type = "Service"', 'identifiers = ["cloudwatch.amazonaws.com"]']), '', B('condition', ['test = "StringEquals"', 'variable = "aws:SourceAccount"', 'values = [data.aws_caller_identity.current.account_id]'])]));
+      }
+      if (ruleArns.length) st.push(B('statement', ['sid = "AllowEventBridgeRules"', 'actions = ["sns:Publish"]', 'resources = [aws_sns_topic.alerts.arn]', '', B('principals', ['type = "Service"', 'identifiers = ["events.amazonaws.com"]']), '', B('condition', ['test = "ArnEquals"', 'variable = "aws:SourceArn"', 'values = ' + hclList(ruleArns)])]));
+      if (notify) st.push(B('statement', ['sid = "AllowAWSBackup"', 'actions = ["sns:Publish"]', 'resources = [aws_sns_topic.alerts.arn]', '', B('principals', ['type = "Service"', 'identifiers = ["backup.amazonaws.com"]'])]));
+      x.v('cloudwatch_alerts_email', 'string', 'Email address subscribed to the alerts topic. Null creates no subscription', c.email || null, { condition: 'var.cloudwatch_alerts_email == null || can(regex("^[^@\\\\s]+@[^@\\\\s]+$", var.cloudwatch_alerts_email))', error: 'cloudwatch_alerts_email must be an email address or null.' });
+      x.o('sns_topic_arn', 'aws_sns_topic.alerts.arn', 'ARN of the alerts SNS topic');
+      let t = R('resource "aws_sns_topic" "alerts"', ['name = "${local.name_prefix}-alerts"']);
+      if (st.length) {
+        t += '\n\n# The topic policy lets only these AWS services publish.\n' + R('data "aws_iam_policy_document" "sns_alerts"', st.flatMap((s, i) => (i ? ['', s] : [s])))
+          + '\n\n' + R('resource "aws_sns_topic_policy" "alerts"', ['arn = aws_sns_topic.alerts.arn', 'policy = data.aws_iam_policy_document.sns_alerts.json']);
+      } else x.note('Nothing publishes to the SNS topic yet: turn on an alarm, an EventBridge rule or backup vault notifications.');
+      t += '\n\n' + R('resource "aws_sns_topic_subscription" "email"', ['count = var.cloudwatch_alerts_email == null ? 0 : 1', '', 'topic_arn = aws_sns_topic.alerts.arn', 'protocol = "email"', 'endpoint = var.cloudwatch_alerts_email']);
+      files.push({ stem: 'sns', title: 'SNS notifications', desc: 'The topic alarms and events publish to, with a policy for each publishing service and an optional email subscription.', body: t });
+    }
+    if (notify) files.push({ stem: 'backup_notifications', title: 'Backup vault notifications', desc: 'AWS Backup vault events sent straight to the SNS topic.', body: R('resource "aws_backup_vault_notifications" "main"', [
+      'backup_vault_name = aws_backup_vault.main.name',
+      'sns_topic_arn = aws_sns_topic.alerts.arn',
+      'backup_vault_events = ' + hclList(vaultEvents.map(e => `"${e}"`)),
+      '',
+      '# AWS Backup checks it can publish before saving the configuration.',
+      'depends_on = [aws_sns_topic_policy.alerts]',
+    ]) });
+
+    if (!files.length) files.push({ stem: 'cloudwatch', title: 'CloudWatch', desc: 'Nothing is turned on yet.', body: '# Every CloudWatch component is turned off in the configuration panel.\n# Turn on a log group, alarm, dashboard or notification to generate resources.' });
+    return files;
   },
 });
 
@@ -1519,6 +2030,7 @@ const PRESETS = [
   { name: 'Kubernetes on EKS', ids: ['vpc', 'subnet', 'route_table', 'igw', 'nat', 'sg', 'kms', 'eks_cluster', 'eks_node_group', 'ecr'] },
   { name: 'Serverless API backend', ids: ['lambda', 'dynamodb', 'kms'] },
   { name: 'Static website on the edge', ids: ['s3', 's3_versioning', 's3_encryption', 'cloudfront', 'waf', 'route53_zone', 'route53_record'] },
+  { name: 'Backup and monitoring for a web server', ids: ['vpc', 'subnet', 'route_table', 'igw', 'nat', 'sg', 'ec2', 'ebs', 'kms', 'backup', 'cloudwatch'] },
 ];
 
-if (typeof module !== 'undefined') module.exports = { SERVICES, SVC, CATS, PRESETS, docUrl, hv, hq, R, B };
+if (typeof module !== 'undefined') module.exports = { SERVICES, SVC, CATS, PRESETS, docUrl, hv, hq, R, B, depsOf, backupTargets, cwDims, CW_TARGET };

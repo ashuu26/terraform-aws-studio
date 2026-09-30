@@ -1,7 +1,7 @@
 :root {
   --bg: #EDF1F4; --panel: #FFFFFF; --panel-2: #F6F8FA; --ink: #16212B; --muted: #5A6875; --line: #D3DBE2; --line-2: #E4E9EE;
   --plan: #5B3FD1; --plan-ink: #FFFFFF; --plan-soft: #EEEAFD;
-  --net: #2F6FB0; --cmp: #B8790A; --db: #2F7D55; --sto: #A2455E; --root: #5A6875;
+  --net: #2F6FB0; --cmp: #B8790A; --db: #2F7D55; --sto: #A2455E; --bkp: #177E89; --mon: #7B55B0; --root: #5A6875;
   --ok: #2F7D55; --warn: #B8790A; --err: #C0392B; --info: #2F6FB0;
   --grid: rgba(47, 111, 176, .08);
   --code-bg: #FBFCFD; --gutter: #F1F4F7;
@@ -19,7 +19,7 @@
   :root:not([data-theme="light"]) {
     --bg: #0F161E; --panel: #16202A; --panel-2: #1B2733; --ink: #E4EAF0; --muted: #93A1AE; --line: #26333F; --line-2: #1F2B36;
     --plan: #9B85FF; --plan-ink: #0F161E; --plan-soft: #241F42;
-    --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --root: #93A1AE;
+    --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --bkp: #4FB8C2; --mon: #A98BE0; --root: #93A1AE;
     --ok: #5FBF8A; --warn: #E0A93B; --err: #F07A6C; --info: #6FA8E0;
     --grid: rgba(111, 168, 224, .07); --code-bg: #121B24; --gutter: #16212C;
     --t-k: #B5A4FF; --t-s: #8BD3A8; --t-n: #F0C06A; --t-c: #6E7D8B; --t-a: #D9E1E8; --t-r: #8CBDEB; --t-f: #F09BB0; --t-b: #B5A4FF; --t-m: #F09BB0;
@@ -30,7 +30,7 @@
 :root[data-theme="dark"] {
   --bg: #0F161E; --panel: #16202A; --panel-2: #1B2733; --ink: #E4EAF0; --muted: #93A1AE; --line: #26333F; --line-2: #1F2B36;
   --plan: #9B85FF; --plan-ink: #0F161E; --plan-soft: #241F42;
-  --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --root: #93A1AE;
+  --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --bkp: #4FB8C2; --mon: #A98BE0; --root: #93A1AE;
   --ok: #5FBF8A; --warn: #E0A93B; --err: #F07A6C; --info: #6FA8E0;
   --grid: rgba(111, 168, 224, .07); --code-bg: #121B24; --gutter: #16212C;
   --t-k: #B5A4FF; --t-s: #8BD3A8; --t-n: #F0C06A; --t-c: #6E7D8B; --t-a: #D9E1E8; --t-r: #8CBDEB; --t-f: #F09BB0; --t-b: #B5A4FF; --t-m: #F09BB0;
@@ -184,6 +184,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .drawer-foot { border-top: 1px solid var(--line); padding: 12px 20px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px 16px; align-items: start; }
 .form-grid .wide { grid-column: 1 / -1; }
+.form-grid .form-sec { grid-column: 1 / -1; margin: 4px 0 -6px; padding-top: 12px; border-top: 1px solid var(--line-2); font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.form-grid .form-sec:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.form-grid .callout { grid-column: 1 / -1; margin: 0; }
+.multi { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 2px 0; }
+.multi .chk { font-size: 13.5px; }
 .box { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
 .box h3 { margin: 0 0 8px; font-size: 14px; }
 .box ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
@@ -293,6 +298,7 @@ mark.cur { background: var(--warn); color: #000; }
 .mod-title { display: flex; align-items: center; gap: 10px; padding: 12px 14px 0; }
 .mod-title h3 { margin: 0; font-size: 15px; }
 .topic-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.topic-cols.guides { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .topic-col h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
 .topic { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; margin-bottom: 8px; }
 .topic summary { cursor: pointer; padding: 10px 12px; font-weight: 600; font-size: 14px; list-style: none; display: flex; align-items: center; gap: 8px; }
@@ -336,7 +342,7 @@ mark.cur { background: var(--warn); color: #000; }
   .below { grid-template-columns: 1fr; }
   .chain { grid-template-columns: 1fr; }
   .chain > .arrow { transform: rotate(90deg); height: 24px; }
-  .topic-cols, .auth-grid { grid-template-columns: 1fr; }
+  .topic-cols, .topic-cols.guides, .auth-grid { grid-template-columns: 1fr; }
   .cmd { grid-template-columns: 1fr auto; }
   .cmd p { grid-column: 1 / -1; grid-row: 2; }
   .search input { width: 100%; }

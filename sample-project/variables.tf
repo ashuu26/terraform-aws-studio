@@ -78,7 +78,7 @@ variable "vpc_enable_dns_hostnames" {
 variable "public_subnets" {
   description = "Public subnets keyed by name; az_index picks an Availability Zone"
   type        = map(object({ cidr_block = string, az_index = number }))
-  default     = {
+  default = {
     public-a = {
       cidr_block = "10.0.1.0/24"
       az_index   = 0
@@ -93,7 +93,7 @@ variable "public_subnets" {
 variable "private_subnets" {
   description = "Private subnets keyed by name; az_index picks an Availability Zone"
   type        = map(object({ cidr_block = string, az_index = number }))
-  default     = {
+  default = {
     private-a = {
       cidr_block = "10.0.11.0/24"
       az_index   = 0
@@ -116,7 +116,7 @@ variable "public_subnet_map_public_ip" {
 variable "sg_ingress_rules" {
   description = "Inbound rules for the application security group"
   type        = map(object({ port = number, cidr_ipv4 = string, description = string }))
-  default     = {
+  default = {
     tcp-443 = {
       port        = 443
       cidr_ipv4   = "10.0.0.0/16"

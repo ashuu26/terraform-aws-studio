@@ -71,7 +71,7 @@ function renderFiles(m) {
         </div>
         <div class="below">
           <div class="panel" id="fileInfo"></div>
-          <div class="panel" id="valPanel"></div>
+          <div class="panel" id="valPanel" tabindex="-1"></div>
         </div>
       </div>
     </div>`;
@@ -170,7 +170,7 @@ function renderFileInfo(f) {
   const s = f.svc ? SVC[f.svc] : null;
   const blocks = /\.tf$/.test(f.name) ? blocksOf(f.content) : [];
   const notes = s ? state.gen.notes.filter(n => n.svc === f.svc) : [];
-  let role = FILE_ROLE[f.name] || (s ? s.desc : '');
+  let role = FILE_ROLE[f.name] || f.partDesc || (s ? s.desc : '');
   if (f.name === '.gitignore') role = 'Keeps state files, plans, local caches and real tfvars out of Git. Commit .terraform.lock.hcl.';
   else if (f.cat === 'extra') role = 'Source code packaged by the archive_file data source in lambda.tf. Replace it with your function.';
   el.innerHTML = `<h3>${s ? 'Resources in this file' : 'About this file'}</h3>
@@ -208,18 +208,27 @@ const ARCH_ROWS = [
   { key: 'data', label: 'Private subnets: data', vpc: true, ids: ['dbsg', 'rds', 'rds_postgres', 'rds_mysql', 'rds_sqlserver', 'aurora', 'elasticache', 'memorydb', 'efs', 'fsx'] },
   { key: 'fabric', label: 'Network foundation', vpc: true, ids: ['vpc', 'subnet', 'route_table', 'sg', 'nacl', 'vpc_endpoint'] },
   { key: 'hybrid', label: 'Hybrid and transit', ids: ['tgw', 'tgw_attach', 'vgw', 'vpn', 'cgw', '@onprem'] },
-  { key: 'regional', label: 'Regional services', ids: ['lambda', 's3', 's3_versioning', 's3_encryption', 's3_lifecycle', 'dynamodb', 'ecr', 'ssm', 'backup'] },
+  { key: 'regional', label: 'Regional services', ids: ['lambda', 's3', 's3_versioning', 's3_encryption', 's3_lifecycle', 'dynamodb', 'ecr', 'ssm'] },
+  { key: 'backup', label: 'Backup and recovery', ids: ['backup'] },
+  { key: 'monitoring', label: 'Events and monitoring', ids: ['@eventbridge', 'cloudwatch'] },
+  { key: 'notify', label: 'Notifications', ids: ['@sns'] },
   { key: 'identity', label: 'Identity and encryption', ids: ['iam_role', 'iam_policy', 'kms'] },
 ];
+// Parts of the CloudWatch service drawn as their own boxes; they appear when the generated code contains them.
+const ARCH_PSEUDO = {
+  '@eventbridge': { name: 'EventBridge rules', sub: 'aws_cloudwatch_event_rule', svc: 'cloudwatch', re: /^resource\s+"aws_cloudwatch_event_rule"/m },
+  '@sns': { name: 'SNS topic', sub: 'aws_sns_topic', svc: 'cloudwatch', re: /^resource\s+"aws_sns_topic"/m },
+};
 const DB_IDS = ['rds', 'rds_postgres', 'rds_mysql', 'rds_sqlserver', 'aurora', 'elasticache', 'memorydb', 'efs', 'fsx'];
 function archGraph() {
-  const has = id => state.archDeps && id.startsWith('@') ? false : id === '@internet' ? ['igw', 'cloudfront', 'route53_zone', 'route53_record', 'alb', 'nlb'].some(isSel) : id === '@onprem' ? ['cgw', 'vpn'].some(isSel) : isSel(id);
+  const cwCode = isSel('cloudwatch') ? live().files.filter(f => f.svc === 'cloudwatch').map(f => f.content).join('\n') : '';
+  const has = id => state.archDeps && id.startsWith('@') ? false : ARCH_PSEUDO[id] ? ARCH_PSEUDO[id].re.test(cwCode) : id === '@internet' ? ['igw', 'cloudfront', 'route53_zone', 'route53_record', 'alb', 'nlb'].some(isSel) : id === '@onprem' ? ['cgw', 'vpn'].some(isSel) : isSel(id);
   const fold = isSel('s3') ? ['s3_versioning', 's3_encryption', 's3_lifecycle'].filter(isSel) : [];
   const present = id => has(id) && !fold.includes(id);
   const E = [];
   const e = (a, b, kind = 'flow', label) => { if (present(a) && present(b)) E.push({ a, b, kind, label }); };
   if (state.archDeps) {
-    for (const id of state.sel) for (const d of SVC[id].deps) { const t = fold.includes(id) ? 's3' : id; if (t !== d) e(d, t, 'dep'); }
+    for (const id of state.sel) for (const d of depsFor(id)) { const t = fold.includes(id) ? 's3' : id; if (t !== d) e(d, t, 'dep'); }
   } else {
     e('@internet', 'route53_zone'); e('route53_zone', 'route53_record');
     if (isSel('cloudfront')) e('route53_record', 'cloudfront'); else e('route53_record', 'alb');
@@ -238,8 +247,18 @@ function archGraph() {
     if (isSel('lambda')) e('lambda', 'dynamodb'); else if (comp) e(comp, 'dynamodb');
     e('@onprem', 'cgw'); e('cgw', 'vpn', 'attach'); e('vpn', 'vgw'); e('tgw_attach', 'tgw', 'attach');
     e('vpc_endpoint', 's3', 'attach', 'private path'); e('vpc_endpoint', 'dynamodb', 'attach', 'private path');
-    const bk = ['rds', 'rds_postgres', 'rds_mysql', 'rds_sqlserver', 'aurora', 'efs', 'dynamodb', 'ebs'].find(present);
-    if (bk) e('backup', bk, 'attach', 'backs up');
+    // Protected resources feed the vault; backup job events flow through EventBridge to CloudWatch or SNS.
+    if (isSel('backup')) backupTargets({ has: isSel }).map(t => t.id).filter(present).slice(0, 4).forEach(t => e(t, 'backup', 'attach', 'backed up'));
+    if (cwCode) {
+      const toSns = /target_id\s*=\s*"sns"/.test(cwCode);
+      if (/"aws\.backup"/.test(cwCode)) e('backup', '@eventbridge', 'flow', 'job events');
+      if (/"aws\.ec2"/.test(cwCode)) ['ec2', 'asg'].forEach(c => e(c, '@eventbridge', 'flow', 'state changes'));
+      e('@eventbridge', toSns ? '@sns' : 'cloudwatch', 'flow');
+      if (/^resource\s+"aws_backup_vault_notifications"/m.test(cwCode)) e('backup', '@sns', 'attach', 'vault notifications');
+      if (/alarm_actions/.test(cwCode)) e('cloudwatch', '@sns', 'flow', 'alarm actions');
+      const t = CW_TARGET[cfgOf('cloudwatch').alarm_target];
+      if (cfgOf('cloudwatch').alarm && t && t.svc) { const src = t.svc.find(present); if (src) e(src, 'cloudwatch', 'attach', 'metrics'); }
+    }
   }
   return { present, fold, E };
 }
@@ -276,7 +295,7 @@ function renderArch(m) {
     y += NH + GY;
   });
   const H = y - GY + PAD + 10;
-  const col = id => id.startsWith('@') ? 'var(--muted)' : CAT_VAR[SVC[id].cat];
+  const col = id => ARCH_PSEUDO[id] ? CAT_VAR[SVC[ARCH_PSEUDO[id].svc].cat] : id.startsWith('@') ? 'var(--muted)' : CAT_VAR[SVC[id].cat];
   const edgePath = ({ a, b }) => {
     const A = pos[a], Bp = pos[b];
     const ax = A.x + NW / 2, bx = Bp.x + NW / 2;
@@ -310,16 +329,17 @@ function renderArch(m) {
     svg += `<path d="${edgePath(ed)}" fill="none" stroke="var(--muted)" stroke-opacity=".75" stroke-width="1.4"${dash} marker-end="url(#ah)"/>`;
   }
   for (const [id, p] of Object.entries(pos)) {
-    if (id.startsWith('@')) {
+    if (id.startsWith('@') && !ARCH_PSEUDO[id]) {
       const label = id === '@internet' ? 'Internet' : 'On-premises';
       svg += `<g><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="25" fill="var(--panel-2)" stroke="var(--line)" stroke-width="1.5"/><text x="${p.x + NW / 2}" y="${p.y + NH / 2 + 5}" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">${label}</text></g>`;
       continue;
     }
-    const s = SVC[id];
-    const sub = id === 's3' && fold.length ? '+ ' + fold.map(f => SVC[f].name.replace(/^S3 (Bucket )?/, '').toLowerCase()).join(', ') : s.res[0];
-    const nm = s.name.split(' (')[0].replace('Application Load Balancer', 'App Load Balancer').replace('Network Load Balancer', 'Net Load Balancer').replace('Load Balancer Listener', 'LB Listener').replace('Elastic Container Registry', 'ECR Repository');
-    svg += `<g class="node" tabindex="0" role="button" data-node="${id}" aria-label="Configure ${esc(s.name)}">
-      <title>${esc(s.name)}: ${esc(s.res.join(', '))}</title>
+    const ps = ARCH_PSEUDO[id];
+    const s = ps ? SVC[ps.svc] : SVC[id];
+    const sub = ps ? ps.sub : id === 's3' && fold.length ? '+ ' + fold.map(f => SVC[f].name.replace(/^S3 (Bucket )?/, '').toLowerCase()).join(', ') : s.res[0];
+    const nm = ps ? ps.name : s.name.split(' (')[0].replace('Application Load Balancer', 'App Load Balancer').replace('Network Load Balancer', 'Net Load Balancer').replace('Load Balancer Listener', 'LB Listener').replace('Elastic Container Registry', 'ECR Repository');
+    svg += `<g class="node" tabindex="0" role="button" data-node="${ps ? ps.svc : id}" aria-label="Configure ${esc(s.name)}${ps ? ': ' + esc(ps.name) : ''}">
+      <title>${esc(ps ? `${ps.name} (part of ${s.name})` : `${s.name}: ${s.res.join(', ')}`)}</title>
       <rect class="body" x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8" fill="var(--panel)" stroke="${col(id)}" stroke-width="1.5"/>
       <rect x="${p.x}" y="${p.y}" width="5" height="${NH}" rx="2" fill="${col(id)}"/>
       <text x="${p.x + 14}" y="${p.y + 21}" font-size="12.5" font-weight="600" fill="var(--ink)">${esc(nm.length > 19 ? nm.slice(0, 18) + '…' : nm)}</text>
@@ -345,7 +365,7 @@ function renderModules(m) {
       ${state.sel.length ? '' : '<p class="hint" style="margin-top:8px">No services selected, so every module is listed.</p>'}</div>
     ${[...groups.values()].map(({ mod, ids }) => {
       const src = `terraform-aws-modules/${mod.m}/aws${mod.sub ? '//' + mod.sub : ''}`;
-      const svcFiles = ids.map(id => files.find(f => f.svc === id)).filter(Boolean).map(f => f.name);
+      const svcFiles = ids.flatMap(id => files.filter(f => f.svc === id)).map(f => f.name);
       const snippet = `module "${mod.key}" {\n  source = "${src}"\n  # version = "..." # pin the current release from the Registry page\n\n${(mod.inputs || []).slice(0, 4).map(i => `  # ${i} = ...`).join('\n')}\n}`;
       return `<article class="panel"><div class="mod-title">${ids.slice(0, 4).map(id => glyph(id, 26)).join('')}<h3>${ids.map(id => esc(SVC[id].name)).join(', ')}</h3></div>
         <div class="chain">
@@ -388,6 +408,10 @@ function renderLearn(m) {
       <dl class="concepts" style="margin-top:12px">${glossary.map(([t, d]) => `<div class="concept"><dt>${t}</dt><dd>${esc(d)}</dd></div>`).join('')}</dl></div>
     <div class="topic-cols">${DIFFS.map(level => `<section class="topic-col"><h2><span class="pill ${level}">${level}</span></h2>
       ${TOPICS.filter(t => t[0] === level).map(t => `<details class="topic" ${lq && t[1] === lq ? 'open' : ''} data-topic="${esc(t[1])}"><summary>${esc(t[1])}</summary><div class="tb"><p style="margin:0">${esc(t[2])}</p>${t[3] ? `<pre class="snippet code">${/^terraform /.test(t[3]) ? esc(t[3]) : highlightHCL(t[3]).html}</pre>` : ''}</div></details>`).join('')}
+    </section>`).join('')}</div>
+    <div class="topic-cols guides">${SERVICE_GUIDES.map(gd => `<section class="topic-col"><h2>${glyph(gd.svc, 24)}${esc(gd.title)}</h2>
+      ${gd.items.map(([t, d]) => `<details class="topic" ${lq && t === lq ? 'open' : ''} data-topic="${esc(t)}"><summary>${esc(t)}</summary><div class="tb"><p style="margin:0">${esc(d)}</p></div></details>`).join('')}
+      ${SVC[gd.svc].guide.length ? `<div class="callout" style="margin-top:4px"><b>Security and compliance</b><ul style="margin:6px 0 0;padding-left:18px">${SVC[gd.svc].guide.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p class="hint" style="margin-top:6px">Educational recommendations, not an automatic compliance certification.</p></div>` : ''}
     </section>`).join('')}</div>
     <div class="panel intro"><h2 style="font-size:15px">Resource reference</h2><p>Every resource and data source this dashboard can generate, with a plain-language summary and a link to its Registry page.</p>
       <div style="margin-top:12px;max-width:340px"><label class="sr" for="resQ">Filter resources</label><input class="inp mono" id="resQ" placeholder="Filter, e.g. aws_lb" spellcheck="false"></div>

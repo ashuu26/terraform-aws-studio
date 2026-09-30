@@ -10,13 +10,21 @@ const PROVIDER_SNAPSHOT = { latestSeen: '6.56.0', checked: '2026-09-25' };
 const TF_VERSIONS = ['1.15', '1.14', '1.13', '1.12', '1.11', '1.10', '1.9', '1.8'];
 const REGIONS = ['ap-southeast-1', 'ap-southeast-5', 'ap-southeast-2', 'ap-southeast-3', 'ap-northeast-1', 'ap-south-1', 'us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1'];
 
-function defaultConfig(svc) { const o = {}; for (const f of svc.fields) o[f.k] = f.d; return o; }
+function defaultConfig(svc) { const o = {}; for (const f of svc.fields) if (f.k) o[f.k] = f.d; return o; }
+// Service files are <file>.tf; the category layout prefixes the category unless the stem already starts with it.
+function svcFileName(s, stem, layout) { return (layout === 'category' && !stem.startsWith(s.cat + '_') ? s.cat + '_' : '') + stem + '.tf'; }
+function typesIn(body) {
+  const t = [];
+  for (const m of body.matchAll(/^(resource|data)\s+"([^"]+)"/gm)) { const k = (m[1] === 'data' ? 'data.' : '') + m[2]; if (!t.includes(k)) t.push(k); }
+  return t;
+}
 
 function makeCtx(sel, cfg) {
   const vars = new Map(), outs = new Map(), data = new Map(), notes = [], flags = { archive: false, useast1: false }, extraFiles = {};
   let current = null;
   const x = {
     has: id => sel.has(id),
+    cfgOf: id => Object.assign(defaultConfig(SVC[id]), cfg[id] || {}),
     setCurrent(id) { current = id; },
     v(name, type, desc, def, val) {
       if (!vars.has(name)) vars.set(name, { type, desc, def, val, svc: current });
@@ -71,12 +79,7 @@ function alignEquals(lines) {
     if (m && !opensMulti && m[1] !== undefined) {
       if (group.length && group[0].ind !== m[1]) flush();
       group.push({ i, ind: m[1], key: m[2], val: m[3] });
-    } else if (m && opensMulti) {
-      if (group.length && group[0].ind === m[1]) {
-        group.push({ i, ind: m[1], key: m[2], val: m[3] });
-      }
-      flush();
-    } else flush();
+    } else flush(); // like terraform fmt, an attribute whose value spans lines is not padded and ends the group
   }
   flush();
   return res;
@@ -99,8 +102,9 @@ function generateProject(selIds, cfgAll, g) {
   for (const s of ordered) {
     x.setCurrent(s.id);
     const c = Object.assign(defaultConfig(s), cfgAll[s.id] || {});
-    const body = s.gen(c, x);
-    svcFiles.push({ svc: s, body });
+    const out = s.gen(c, x);
+    if (Array.isArray(out)) for (const p of out) svcFiles.push({ svc: s, body: p.body, stem: p.stem, part: p });
+    else svcFiles.push({ svc: s, body: out, stem: s.file });
   }
 
   const files = [];
@@ -148,9 +152,16 @@ function generateProject(selIds, cfgAll, g) {
   // service files
   for (const f of svcFiles) {
     const s = f.svc;
-    const links = s.res.map(t => '  ' + t + ': ' + docUrl(t));
-    const name = (g.layout === 'category' ? s.cat + '_' : '') + s.file + '.tf';
-    files.push({ name, cat: s.cat, svc: s.id, content: tidy(header(`${s.name}`, [s.desc, 'Registry docs:', ...links]) + f.body) });
+    const name = svcFileName(s, f.stem, g.layout);
+    if (f.part) {
+      // Multi-file services list only the types that appear in each file.
+      const types = typesIn(f.body);
+      const head = header(`${s.name}: ${f.part.title}`, [f.part.desc, ...(types.length ? ['Registry docs:', ...types.map(t => '  ' + t + ': ' + docUrl(t))] : [])]);
+      files.push({ name, cat: s.cat, svc: s.id, part: f.part.title, partDesc: f.part.desc, content: tidy(head + f.body) });
+    } else {
+      const links = s.res.map(t => '  ' + t + ': ' + docUrl(t));
+      files.push({ name, cat: s.cat, svc: s.id, content: tidy(header(`${s.name}`, [s.desc, 'Registry docs:', ...links]) + f.body) });
+    }
   }
 
   // outputs.tf
@@ -277,10 +288,10 @@ function validateProject(files, selIds, cfgAll, g) {
   if (!checks.security.items.some(i => i.level === 'error')) add('security', 'ok', 'No access keys, secrets, passwords or private keys found in the generated code.');
 
   // Design / dependency checks
-  for (const id of sel) for (const d of SVC[id].deps) if (!sel.has(d)) add('design', 'info', `${SVC[id].name} usually pairs with ${SVC[d].name}. It will use an input variable or a default instead.`);
+  const cfgOf = id => Object.assign(defaultConfig(SVC[id]), cfgAll[id] || {});
+  for (const id of sel) for (const d of depsOf(id, cfgOf(id), i => sel.has(i))) if (!sel.has(d)) add('design', 'info', `${SVC[id].name} usually pairs with ${SVC[d].name}. It will use an input variable or a default instead.`);
   const ports = sel.has('sg') ? csv(sgCfg.ports).map(Number) : null;
   const needPort = (ids, port, what) => { if (ports && ids.some(i => sel.has(i)) && !ports.includes(port)) add('design', 'warn', `${what} needs TCP ${port} in the security group; it is not in the allowed ports.`); };
-  const cfgOf = id => Object.assign(defaultConfig(SVC[id]), cfgAll[id] || {});
   if (sel.has('rds') || sel.has('rds_postgres') || sel.has('aurora')) {
     const pg = sel.has('rds_postgres') || (sel.has('rds') && cfgOf('rds').engine === 'postgres') || (sel.has('aurora') && cfgOf('aurora').engine === 'aurora-postgresql');
     if (pg) needPort(['rds', 'rds_postgres', 'aurora'], 5432, 'PostgreSQL');
@@ -305,6 +316,51 @@ function validateProject(files, selIds, cfgAll, g) {
   if (sel.has('tg') && sel.has('nlb') && !sel.has('alb') && cfgOf('tg').protocol !== 'TCP') add('design', 'error', 'A Network Load Balancer needs a TCP target group.');
   if (sel.has('listener') && sel.has('alb') && cfgOf('listener').protocol === 'HTTPS') add('design', 'info', 'The HTTPS listener needs certificate_arn set in terraform.tfvars.');
   if (sel.has('fsx') && ports && !ports.includes(988)) add('design', 'warn', 'FSx for Lustre needs TCP 988 and 1018-1023 in the security group.');
+
+  // AWS Backup
+  if (sel.has('backup')) {
+    const c = cfgOf('backup');
+    for (const [a, what] of [['aws_backup_vault.main', 'Backup Vault'], ['aws_backup_plan.main', 'Backup Plan'], ['aws_backup_selection.main', 'Backup Selection']]) if (!declared.res.has(a)) add('design', 'error', `Missing ${what}: AWS Backup needs ${a}.`);
+    if (c.role !== 'Use existing' && !declared.res.has('aws_iam_role.backup')) add('design', 'error', 'Missing IAM Backup Role: aws_backup_selection needs aws_iam_role.backup, or choose an existing role.');
+    const keep = +c.retention;
+    if (+c.completion_window < +c.start_window + 60) add('design', 'error', 'The backup completion window must be at least 60 minutes longer than the start window.');
+    if (c.cold && keep < +c.cold_after + 90) add('design', 'error', 'With cold storage, retention must be at least 90 days longer than the cold storage delay.');
+    if (c.continuous && keep > 35) add('design', 'error', 'Continuous backups keep recovery points for at most 35 days. Lower the retention or turn continuous backup off.');
+    if (c.continuous && c.cold) add('design', 'warn', 'Continuous recovery points cannot move to cold storage; only snapshot recovery points will.');
+    if (c.lock) {
+      if (+c.lock_min > +c.lock_max) add('design', 'error', 'The Vault Lock minimum retention is greater than the maximum.');
+      else if (keep < +c.lock_min || keep > +c.lock_max) add('design', 'error', `Backup retention (${keep} days) is outside the Vault Lock range (${c.lock_min} to ${c.lock_max} days), so backup jobs would fail.`);
+      if (c.lock_mode === 'Compliance') add('design', 'warn', 'Vault Lock is in compliance mode: after the grace period it cannot be removed and retention cannot be shortened.');
+    }
+    if (c.force_destroy && c.vault_policy) add('design', 'warn', 'The vault policy denies deleting recovery points, so force_destroy cannot empty the vault on destroy.');
+    const targets = backupTargets({ has: i => sel.has(i) });
+    if (c.selection === 'By resource ARN' && !targets.length) add('design', 'warn', 'The backup selection has no resource ARNs yet. Set backup_resource_arns in terraform.tfvars.');
+    if (c.selection === 'By resource type' && !csv(c.types).length) add('design', 'error', 'Pick at least one resource type for the backup selection.');
+    if (c.selection === 'Selected services and tags' && !targets.length) add('design', 'info', `No service AWS Backup can protect is selected, so only resources tagged ${c.tag_key}=${c.tag_value} are backed up.`);
+    const s3Picked = c.selection === 'By resource type' ? csv(c.types).includes('S3') : c.selection !== 'By resource tags' && sel.has('s3');
+    if (s3Picked && !sel.has('s3_versioning')) add('design', 'warn', 'AWS Backup for S3 requires versioning on the bucket. Select S3 Bucket Versioning.');
+  }
+
+  // Amazon CloudWatch
+  if (sel.has('cloudwatch')) {
+    const c = cfgOf('cloudwatch');
+    if (c.metric_filter && !declared.res.has('aws_cloudwatch_log_group.app') && !declared.vars.has('cloudwatch_filter_log_group_name')) add('design', 'error', 'Missing CloudWatch Log Group: the metric filter has no log group to read.');
+    if (c.metric_filter && !c.log_group) add('design', 'info', 'The metric filter reads an existing log group passed in as var.cloudwatch_filter_log_group_name.');
+    if (c.log_group && c.metric_filter && c.log_class === 'INFREQUENT_ACCESS') add('design', 'error', 'Infrequent Access log groups do not support metric filters. Use the STANDARD log class.');
+    if (c.log_group && c.log_kms && !sel.has('kms')) add('design', 'warn', 'Log group encryption needs the KMS Key service selected. Without it the log group uses default encryption.');
+    const p = +c.period;
+    if (c.alarm && ![10, 20, 30].includes(p) && p % 60 !== 0) add('design', 'error', 'The alarm period must be 10, 20, 30 or a multiple of 60 seconds.');
+    if (!c.sns && (c.alarm || (c.metric_filter && c.filter_alarm))) add('design', 'info', 'The SNS topic is off, so alarms change state in the console but notify nobody.');
+    if (sel.has('backup') && !c.sns && (c.bk_vault || ((c.bk_failed || c.bk_completed) && !c.bk_eventbridge))) add('design', 'warn', 'Backup vault notifications need the SNS topic, so they were not generated.');
+  }
+  // AWS metrics are published per resource; an alarm without dimensions usually matches no data. This also covers hand edits.
+  for (const { f, code } of all) {
+    for (const m of code.matchAll(/^resource\s+"aws_cloudwatch_metric_alarm"\s+"([^"]+)"\s*\{/gm)) {
+      const end = code.indexOf('\n}', m.index);
+      const body = code.slice(m.index, end < 0 ? code.length : end);
+      if (/\bnamespace\s*=\s*"AWS\//.test(body) && !/\bdimensions\s*=/.test(body) && !/\bmetric_query\b/.test(body)) add('design', 'warn', `Missing CloudWatch metric dimensions: aws_cloudwatch_metric_alarm.${m[1]} in ${f.name} watches an AWS namespace without dimensions, so it may match no data.`);
+    }
+  }
   if (!checks.design.items.length) add('design', 'ok', 'Selected services have the pieces they depend on.');
 
   for (const k of Object.keys(checks)) {
@@ -401,4 +457,4 @@ function highlightHCL(src, query) {
   return { html, count: markRanges.length, ranges: markRanges };
 }
 
-if (typeof module !== 'undefined') module.exports = { generateProject, validateProject, highlightHCL, tidy, DEFAULT_GLOBAL, TF_VERSIONS, REGIONS, PROVIDER_SNAPSHOT, defaultConfig };
+if (typeof module !== 'undefined') module.exports = { generateProject, validateProject, highlightHCL, tidy, DEFAULT_GLOBAL, TF_VERSIONS, REGIONS, PROVIDER_SNAPSHOT, defaultConfig, svcFileName };
