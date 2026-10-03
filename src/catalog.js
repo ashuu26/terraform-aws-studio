@@ -63,14 +63,15 @@ const csv = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
      guide                 educational security and compliance notes shown in the drawer.
      gen(c, x)             returns HCL for <file>.tf, or [{ stem, title, body }] for several files.
 */
+// Display order on the Services page, filters and summary bars. Landing Zone comes first.
 const CATS = {
+  landingzone: { label: 'Landing Zone', color: 'lz' },
   networking: { label: 'Networking', color: 'net' },
   compute: { label: 'Compute', color: 'cmp' },
   database: { label: 'Database', color: 'db' },
   storage: { label: 'Storage', color: 'sto' },
   backup: { label: 'Backup', color: 'bkp' },
   monitoring: { label: 'Monitoring', color: 'mon' },
-  landingzone: { label: 'Landing Zone', color: 'lz' },
 };
 
 const SERVICES = [];
