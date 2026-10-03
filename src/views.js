@@ -213,6 +213,7 @@ const ARCH_ROWS = [
   { key: 'monitoring', label: 'Events and monitoring', ids: ['@eventbridge', 'cloudwatch'] },
   { key: 'notify', label: 'Notifications', ids: ['@sns'] },
   { key: 'identity', label: 'Identity and encryption', ids: ['iam_role', 'iam_policy', 'kms'] },
+  { key: 'org', label: 'Organization and governance', ids: ['landing_zone'] },
 ];
 // Parts of the CloudWatch service drawn as their own boxes; they appear when the generated code contains them.
 const ARCH_PSEUDO = {
@@ -263,13 +264,20 @@ function archGraph() {
   return { present, fold, E };
 }
 function renderArch(m) {
-  m.innerHTML = `<div class="panel arch-wrap">
+  const lzc = isSel(LZ_ID) ? cfgOf(LZ_ID) : null;
+  const lzPanel = lzc && lzc.model ? `<div class="panel arch-wrap" style="margin-bottom:16px">
+    <div class="arch-head"><h2>Landing zone: ${esc(LZ_MODEL_INFO[lzc.model].title)}</h2><button class="btn sm" id="archLz">Open builder</button></div>
+    <div class="lz-svgwrap">${lzTreeSvg(lzc)}</div>
+    <div class="legend"><span>Boxes follow your OUs and accounts. Red labels show attached SCPs, which apply to everything below.</span>${state.lzTarget ? '<span>Dashed box: other selected services, shown conceptually in the chosen account.</span>' : ''}</div></div>` : '';
+  if (lzc && state.sel.length === 1) { m.innerHTML = lzPanel; $('#archLz', m).onclick = () => setTab('landing'); return; }
+  m.innerHTML = lzPanel + `<div class="panel arch-wrap">
     <div class="arch-head"><h2>Architecture of your selection</h2>
       <div class="seg" role="group" aria-label="Diagram mode"><button data-am="flow" aria-pressed="${!state.archDeps}">Traffic flow</button><button data-am="dep" aria-pressed="${state.archDeps}">Terraform dependencies</button></div></div>
     <div class="arch-canvas" id="archCanvas"></div>
     <div class="legend">${state.archDeps ? '<span><i></i>arrow points from the dependency to the resource that references it</span>' : '<span><i></i>traffic or data flow</span><span><i class="dash"></i>attachment, protection or configuration</span>'}
       ${Object.entries(CATS).map(([k, c]) => `<span><span class="dot" style="background:${CAT_VAR[k]}"></span>${c.label}</span>`).join('')}<span>Select a box to configure it.</span></div></div>`;
   $$('[data-am]', m).forEach(b => b.onclick = () => { state.archDeps = b.dataset.am === 'dep'; renderMain(); });
+  const al = $('#archLz', m); if (al) al.onclick = () => setTab('landing');
   const cv = $('#archCanvas', m);
   if (!state.sel.length) { cv.innerHTML = `<div class="empty"><h3>Nothing to draw yet</h3><p>Select services and the diagram builds itself, layer by layer.</p><button class="btn" id="aG">Load the guided example</button></div>`; $('#aG', cv).onclick = () => applyPreset(PRESETS[0]); return; }
   const { present, fold, E } = archGraph();
@@ -413,6 +421,19 @@ function renderLearn(m) {
       ${gd.items.map(([t, d]) => `<details class="topic" ${lq && t === lq ? 'open' : ''} data-topic="${esc(t)}"><summary>${esc(t)}</summary><div class="tb"><p style="margin:0">${esc(d)}</p></div></details>`).join('')}
       ${SVC[gd.svc].guide.length ? `<div class="callout" style="margin-top:4px"><b>Security and compliance</b><ul style="margin:6px 0 0;padding-left:18px">${SVC[gd.svc].guide.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p class="hint" style="margin-top:6px">Educational recommendations, not an automatic compliance certification.</p></div>` : ''}
     </section>`).join('')}</div>
+    <section class="panel intro lz-learn" aria-labelledby="lzLearnH"><h2 id="lzLearnH">${glyph(LZ_ID, 24)} Learn AWS Landing Zones</h2>
+      <p>AWS Organizations, Control Tower and service control policies, each mapped to the Terraform resources that do (and do not) exist for it.</p>
+      <div class="lz-learn-grid">${LZ_TOPICS.map(tp => `<details class="topic" ${lq && tp.t === lq ? 'open' : ''} data-topic="${esc(tp.t)}"><summary>${esc(tp.t)}</summary><div class="tb">
+        <dl class="concepts lz-concepts">
+          <div class="concept"><dt>Concept</dt><dd>${esc(tp.concept)}</dd></div>
+          <div class="concept"><dt>Purpose</dt><dd>${esc(tp.purpose)}</dd></div>
+          <div class="concept"><dt>AWS architecture</dt><dd>${esc(tp.arch)}</dd></div>
+          <div class="concept"><dt>Terraform mapping</dt><dd>${esc(tp.tf)}</dd></div>
+        </dl>
+        <div><p class="sec-title">Example</p><pre class="snippet code">${/[{=]/.test(tp.example) ? highlightHCL(tp.example).html : esc(tp.example)}</pre></div>
+        <div><p class="sec-title">Common mistakes</p><ul style="margin:0;padding-left:18px">${tp.mistakes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div class="lz-doclinks">${extLink(tp.aws, 'AWS documentation ' + IC.ext.replace('<svg', '<svg width="12" height="12"'), 'btn sm')}${tp.reg.map(t => extLink(docUrl(t), esc(t) + ' ' + IC.ext.replace('<svg', '<svg width="12" height="12"'), 'btn sm ghost')).join('')}</div>
+      </div></details>`).join('')}</div></section>
     <div class="panel intro"><h2 style="font-size:15px">Resource reference</h2><p>Every resource and data source this dashboard can generate, with a plain-language summary and a link to its Registry page.</p>
       <div style="margin-top:12px;max-width:340px"><label class="sr" for="resQ">Filter resources</label><input class="inp mono" id="resQ" placeholder="Filter, e.g. aws_lb" spellcheck="false"></div>
       <ul class="res-list" id="resRef" style="margin-top:10px">${types.map(t => `<li data-t="${esc(t)}"><span class="addr">${esc(t)}</span><span class="hint" style="flex:2;font-family:var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(RES_INFO[t][0])}</span><button class="btn sm" data-lt="${esc(t)}">${IC.book} Learn</button></li>`).join('')}</ul></div>

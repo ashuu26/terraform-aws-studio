@@ -8,9 +8,9 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const STORE_KEY = 'tf-aws-dashboard:v1';
 const DIFFS = ['Beginner', 'Intermediate', 'Advanced'];
-const CAT_VAR = { networking: 'var(--net)', compute: 'var(--cmp)', database: 'var(--db)', storage: 'var(--sto)', backup: 'var(--bkp)', monitoring: 'var(--mon)', root: 'var(--root)', extra: 'var(--root)' };
-const ABBR = { vpc: 'VPC', subnet: 'SUB', route_table: 'RT', igw: 'IGW', eip: 'EIP', nat: 'NAT', sg: 'SG', nacl: 'ACL', vpc_endpoint: 'VPCE', tgw: 'TGW', tgw_attach: 'TGWA', alb: 'ALB', nlb: 'NLB', tg: 'TG', route53_zone: 'R53', route53_record: 'DNS', waf: 'WAF', cloudfront: 'CF', vgw: 'VGW', cgw: 'CGW', vpn: 'VPN', ec2: 'EC2', lt: 'LT', asg: 'ASG', listener: 'LSN', lambda: 'λ', ecs_cluster: 'ECS', ecs_task: 'TASK', ecs_service: 'SVC', eks_cluster: 'EKS', eks_node_group: 'NG', ecr: 'ECR', ssm: 'SSM', iam_role: 'ROLE', iam_policy: 'POL', dbsg: 'DBSG', rds: 'RDS', rds_postgres: 'PG', rds_mysql: 'MY', rds_sqlserver: 'MSSQL', aurora: 'AUR', dynamodb: 'DDB', elasticache: 'EC', memorydb: 'MDB', s3: 'S3', s3_versioning: 'VER', s3_encryption: 'ENC', s3_lifecycle: 'LC', ebs: 'EBS', efs: 'EFS', fsx: 'FSx', backup: 'BKP', kms: 'KMS', cloudwatch: 'CW' };
-const TABS = [['services', 'Services'], ['files', 'Terraform files'], ['arch', 'Architecture'], ['modules', 'Modules'], ['learn', 'Learn Terraform'], ['cli', 'CLI & auth']];
+const CAT_VAR = { networking: 'var(--net)', compute: 'var(--cmp)', database: 'var(--db)', storage: 'var(--sto)', backup: 'var(--bkp)', monitoring: 'var(--mon)', landingzone: 'var(--lz)', root: 'var(--root)', extra: 'var(--root)' };
+const ABBR = { vpc: 'VPC', subnet: 'SUB', route_table: 'RT', igw: 'IGW', eip: 'EIP', nat: 'NAT', sg: 'SG', nacl: 'ACL', vpc_endpoint: 'VPCE', tgw: 'TGW', tgw_attach: 'TGWA', alb: 'ALB', nlb: 'NLB', tg: 'TG', route53_zone: 'R53', route53_record: 'DNS', waf: 'WAF', cloudfront: 'CF', vgw: 'VGW', cgw: 'CGW', vpn: 'VPN', ec2: 'EC2', lt: 'LT', asg: 'ASG', listener: 'LSN', lambda: 'λ', ecs_cluster: 'ECS', ecs_task: 'TASK', ecs_service: 'SVC', eks_cluster: 'EKS', eks_node_group: 'NG', ecr: 'ECR', ssm: 'SSM', iam_role: 'ROLE', iam_policy: 'POL', dbsg: 'DBSG', rds: 'RDS', rds_postgres: 'PG', rds_mysql: 'MY', rds_sqlserver: 'MSSQL', aurora: 'AUR', dynamodb: 'DDB', elasticache: 'EC', memorydb: 'MDB', s3: 'S3', s3_versioning: 'VER', s3_encryption: 'ENC', s3_lifecycle: 'LC', ebs: 'EBS', efs: 'EFS', fsx: 'FSx', backup: 'BKP', kms: 'KMS', cloudwatch: 'CW', landing_zone: 'LZ' };
+const TABS = [['services', 'Services'], ['landing', 'Landing Zone'], ['files', 'Terraform files'], ['arch', 'Architecture'], ['modules', 'Modules'], ['learn', 'Learn Terraform'], ['cli', 'CLI & auth']];
 const PROVIDER_OPTIONS = [
   ['~> 6.0', 'any 6.x'],
   ['~> ' + PROVIDER_SNAPSHOT.latestSeen.split('.').slice(0, 2).join('.'), PROVIDER_SNAPSHOT.latestSeen.split('.').slice(0, 2).join('.') + ' or newer 6.x'],
@@ -30,6 +30,7 @@ const FILE_ROLE = {
 const COMPONENTS = {
   backup: [['aws_backup_vault', 'Backup vault'], ['aws_backup_plan', 'Backup plan and rule'], ['aws_backup_selection', 'Backup selection'], ['aws_iam_role', 'IAM backup role'], ['aws_backup_vault_policy', 'Vault access policy'], ['aws_backup_vault_lock_configuration', 'Vault Lock']],
   cloudwatch: [['aws_cloudwatch_log_group', 'Log group'], ['aws_cloudwatch_log_metric_filter', 'Log metric filter'], ['aws_cloudwatch_metric_alarm', 'Metric alarm'], ['aws_cloudwatch_composite_alarm', 'Composite alarm'], ['aws_cloudwatch_dashboard', 'Dashboard'], ['aws_cloudwatch_event_rule', 'EventBridge rule'], ['aws_sns_topic', 'SNS topic'], ['aws_backup_vault_notifications', 'Backup vault notifications']],
+  landing_zone: [['aws_organizations_organization', 'Organization'], ['aws_organizations_organizational_unit', 'Organizational units'], ['aws_organizations_account', 'Accounts'], ['aws_organizations_policy', 'Service control policies'], ['aws_organizations_policy_attachment', 'SCP attachments'], ['aws_controltower_landing_zone', 'Control Tower landing zone'], ['aws_controltower_baseline', 'OU registration'], ['aws_controltower_control', 'Control Tower controls'], ['aws_servicecatalog_provisioned_product', 'Account Factory accounts']],
 };
 
 /* ---------------- state ---------------- */
@@ -37,7 +38,7 @@ const state = {
   sel: [], cfg: {}, g: Object.assign({}, DEFAULT_GLOBAL), theme: null, openOnSelect: true,
   tab: 'services', q: '', cats: new Set(), diffs: new Set(), selectedOnly: false,
   gen: null, genKey: '', edits: {}, curFile: 'providers.tf', codeQ: '', codeHit: 0, expanded: false,
-  archDeps: false, recOff: new Set(), learnQ: '',
+  archDeps: false, recOff: new Set(), learnQ: '', lzStep: 0, lzTarget: '',
 };
 function load() {
   try {
@@ -49,10 +50,12 @@ function load() {
     if (d.g) Object.assign(state.g, d.g);
     if (d.theme === 'light' || d.theme === 'dark') state.theme = d.theme;
     if (typeof d.openOnSelect === 'boolean') state.openOnSelect = d.openOnSelect;
+    if (Number.isInteger(d.lzStep)) state.lzStep = d.lzStep;
+    if (typeof d.lzTarget === 'string') state.lzTarget = d.lzTarget;
   } catch (e) { /* storage unavailable or corrupt: start fresh */ }
 }
 function persist() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify({ sel: state.sel, cfg: state.cfg, g: state.g, theme: state.theme, openOnSelect: state.openOnSelect })); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ sel: state.sel, cfg: state.cfg, g: state.g, theme: state.theme, openOnSelect: state.openOnSelect, lzStep: state.lzStep, lzTarget: state.lzTarget })); } catch (e) { /* ignore */ }
 }
 const isSel = id => state.sel.includes(id);
 function cfgOf(id) { return Object.assign(defaultConfig(SVC[id]), state.cfg[id] || {}); }
@@ -227,6 +230,8 @@ function setTab(t, scroll = true) {
 /* ---------------- selection logic ---------------- */
 function changed() { persist(); renderTabs(); renderSummary(); if (state.tab !== 'files' || isStale()) renderMain(); }
 function toggle(id, opts = {}) {
+  // The landing zone is configured in its own builder, which starts from a model choice.
+  if (id === LZ_ID && !isSel(id)) { setTab('landing'); return; }
   if (isSel(id)) { state.sel = state.sel.filter(x => x !== id); toast(`Removed ${SVC[id].name}`); }
   else {
     state.sel.push(id);
@@ -263,7 +268,8 @@ function applyPreset(p) {
   const doIt = () => {
     state.sel = p.ids.slice();
     state.cfg = {};
-    if (p.cfg) for (const [k, v] of Object.entries(p.cfg)) state.cfg[k] = Object.assign({}, v);
+    if (p.cfg) for (const [k, v] of Object.entries(p.cfg)) state.cfg[k] = JSON.parse(JSON.stringify(v));
+    if (p.ids.includes(LZ_ID)) state.lzStep = 7;
     toast(`Loaded "${p.name}" (${p.ids.length} services)`, { label: 'Generate', fn: generate });
     changed();
   };
@@ -272,7 +278,7 @@ function applyPreset(p) {
 }
 function resetAll() {
   if ((state.sel.length || state.gen) && !confirm('Reset the project? This clears selected services, their settings and any generated or edited code.')) return;
-  Object.assign(state, { sel: [], cfg: {}, g: Object.assign({}, DEFAULT_GLOBAL), gen: null, genKey: '', edits: {}, q: '', cats: new Set(), diffs: new Set(), selectedOnly: false, curFile: 'providers.tf', codeQ: '', recOff: new Set() });
+  Object.assign(state, { sel: [], cfg: {}, g: Object.assign({}, DEFAULT_GLOBAL), gen: null, genKey: '', edits: {}, q: '', cats: new Set(), diffs: new Set(), selectedOnly: false, curFile: 'providers.tf', codeQ: '', recOff: new Set(), lzStep: 0, lzTarget: '' });
   $('#q').value = ''; $('#tfVersion').value = state.g.tf; $('#provVersion').value = state.g.provider;
   persist(); setTab('services'); renderSummary(); toast('Project reset');
 }
@@ -341,6 +347,10 @@ function renderSummary() {
       <p class="sec-title">${esc(CATS[SVC[id].cat].label)}: ${esc(SVC[id].name)}</p>
       ${got.length ? `<ul class="foundation">${got.map(([, l]) => `<li><span class="mark ok" aria-hidden="true">✓</span>${esc(l)}</li>`).join('')}</ul>` : '<p class="hint">Nothing turned on yet. Configure the service to add components.</p>'}
     </div>`).join('')}
+    ${isSel(LZ_ID) && cfgOf(LZ_ID).model ? (() => { const c = cfgOf(LZ_ID); const n = lzActiveAccounts(c).length; return `<div>
+      <p class="sec-title">Landing zone</p>
+      <dl class="kv"><dt>Model</dt><dd>${esc(LZ_MODEL_INFO[c.model].label)}</dd><dt>Control Tower</dt><dd>${lzCtOn(c) ? '✓' : c.model === 'enterprise' ? 'Off' : 'Not selected'}</dd><dt>OUs</dt><dd>${c.ous.length}</dd><dt>Accounts</dt><dd>${n + 1}</dd><dt>SCPs</dt><dd>${c.scps.length}</dd></dl>
+      <button class="btn sm ghost" id="openLz" style="margin-top:6px">Open Landing Zone builder</button></div>`; })() : ''}
     ${recs.length ? `<div class="recs" id="recs">
       <p class="sec-title" style="margin:0;color:var(--ink)">Recommended dependencies</p>
       <p class="hint">Nothing is added until you confirm. Untick anything you already have; the generated code then asks for its ID as a variable instead.</p>
@@ -368,6 +378,7 @@ function renderSummary() {
   $$('[data-rec]', el).forEach(c => c.onchange = () => { c.checked ? state.recOff.delete(c.dataset.rec) : state.recOff.add(c.dataset.rec); });
   const ar = $('#addRecs', el);
   if (ar) ar.onclick = () => addRecommended(recs.map(r => r.id).filter(id => !state.recOff.has(id)));
+  const ol = $('#openLz', el); if (ol) ol.onclick = () => setTab('landing');
   $$('[data-cfg]', el).forEach(b => b.onclick = () => openConfig(b.dataset.cfg));
   $$('[data-rm]', el).forEach(b => b.onclick = () => toggle(b.dataset.rm));
   $('#genBtnSide', el).onclick = generate;
@@ -383,7 +394,7 @@ function renderSummary() {
 /* ---------------- main router ---------------- */
 function renderMain() {
   const m = $('#main');
-  ({ services: renderServices, files: renderFiles, arch: renderArch, modules: renderModules, learn: renderLearn, cli: renderCli })[state.tab](m);
+  ({ services: renderServices, landing: renderLanding, files: renderFiles, arch: renderArch, modules: renderModules, learn: renderLearn, cli: renderCli })[state.tab](m);
 }
 
 /* ---------------- services view ---------------- */
@@ -398,6 +409,8 @@ function renderServices(m) {
   const list = base.filter(s => (!state.cats.size || state.cats.has(s.cat)) && (!state.diffs.size || state.diffs.has(s.diff)));
   const catCount = k => base.filter(s => s.cat === k && (!state.diffs.size || state.diffs.has(s.diff))).length;
   const diffCount = d => base.filter(s => s.diff === d && (!state.cats.size || state.cats.has(s.cat))).length;
+  const qt = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const caps = qt.length ? LZ_CAPS.filter(x => qt.every(t => (x.name + ' ' + x.kw + ' ' + x.res).toLowerCase().includes(t))) : [];
   m.innerHTML = `<div class="svc-layout">
     <aside class="panel filters" aria-label="Filters">
       <fieldset><legend>Category</legend>${Object.entries(CATS).map(([k, c]) => `<label class="chk"><input type="checkbox" data-cat="${k}" ${state.cats.has(k) ? 'checked' : ''}><span class="dot" style="background:${CAT_VAR[k]}"></span>${c.label}<span class="n">${catCount(k)}</span></label>`).join('')}</fieldset>
@@ -412,6 +425,7 @@ function renderServices(m) {
     <section aria-label="Services">
       <div class="results-bar"><h2>AWS services</h2><span class="muted" aria-live="polite">${list.length} of ${SERVICES.length}${q ? ` matching "${esc(q)}"` : ''}</span>
         ${state.cats.size || state.diffs.size || q || state.selectedOnly ? '<button class="btn sm ghost" id="clearF">Clear filters</button>' : ''}</div>
+      ${caps.length ? `<div class="panel lz-hits"><p class="sec-title">Landing Zone capabilities matching "${esc(q)}"</p><ul>${caps.map(x => `<li><button class="btn sm ghost" data-cap="${x.step}"><b>${esc(x.name)}</b></button><code class="hint">${esc(x.res)}</code><span class="pill">${x.models === 'both' ? 'Enterprise and Non-Enterprise' : x.models === 'enterprise' ? 'Enterprise' : 'Non-Enterprise'}</span></li>`).join('')}</ul></div>` : ''}
       ${list.length ? Object.keys(CATS).map(k => {
         const items = list.filter(s => s.cat === k);
         if (!items.length) return '';
@@ -430,6 +444,7 @@ function renderServices(m) {
     const nb = $(`[data-toggle="${id}"]`); if (nb) nb.focus();
   });
   $$('[data-open]', m).forEach(b => b.onclick = () => openConfig(b.dataset.open));
+  $$('[data-cap]', m).forEach(b => b.onclick = () => { if (isSel(LZ_ID)) state.lzStep = +b.dataset.cap; setTab('landing'); });
 }
 function card(s) {
   const sel = isSel(s.id);
@@ -445,7 +460,7 @@ function card(s) {
       ${extLink(docUrl(s.res[0]), 'Docs ' + IC.ext.replace('<svg', '<svg width="13" height="13"'), 'btn sm ghost" title="Terraform Registry: ' + esc(s.res[0]))}
       <span class="spacer"></span>
       ${sel ? `<button class="icon-btn" data-open="${s.id}" aria-label="Configure ${esc(s.name)}" title="Configure">${IC.gear}</button>` : `<button class="btn sm ghost" data-open="${s.id}" aria-label="Details for ${esc(s.name)}">Details</button>`}
-      <button class="btn sm ${sel ? '' : 'select'}" data-toggle="${s.id}" aria-pressed="${sel}" aria-label="${sel ? 'Deselect' : 'Select'} ${esc(s.name)}">${sel ? '✓ Selected' : 'Select'}</button>
+      <button class="btn sm ${sel ? '' : 'select'}" data-toggle="${s.id}" aria-pressed="${sel}" aria-label="${sel ? 'Deselect' : s.wizard ? 'Open the builder for' : 'Select'} ${esc(s.name)}">${sel ? '✓ Selected' : s.wizard ? 'Open builder' : 'Select'}</button>
     </div></article>`;
 }
 
@@ -509,6 +524,7 @@ function blocksOf(content) {
   return out;
 }
 function openConfig(id) {
+  if (SVC[id].wizard) { closeDrawer(); setTab('landing'); return; }
   const s = SVC[id];
   const sel = isSel(id);
   const html = `<div class="drawer-head">${glyph(id)}<div><h2 id="drawerTitle">${esc(s.name)} ${sel ? 'configuration' : ''}</h2>

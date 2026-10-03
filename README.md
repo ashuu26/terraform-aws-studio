@@ -8,12 +8,13 @@ An interactive studio for learning the `hashicorp/aws` provider. You pick AWS se
 | --- | --- |
 | `index.html` | The whole app in one self-contained file (built output). |
 | `src/catalog.js` | Service catalog: metadata, config fields and one Terraform generator per service. |
+| `src/landingzone.js` | AWS Landing Zone model, starter templates, SCP templates, Control Tower control catalog, model checks and the `landing_zone` generator. |
 | `src/engine.js` | Project assembly, `fmt`-style alignment, static validation and HCL syntax highlighting. |
 | `src/learn.js` | Learning content: resource summaries, concept topics, CLI and auth notes, Registry module map. |
-| `src/ui.js`, `src/views.js` | UI state, header, summary panel, service cards, drawers, and the six views. |
+| `src/ui.js`, `src/views.js`, `src/landing.js` | UI state, header, summary panel, service cards, drawers, the seven views, and the Landing Zone dashboard and wizard. |
 | `src/styles.css`, `src/template.html` | Styles and the HTML shell. |
 | `src/build.py` | Inlines CSS and JS into `index.html`. |
-| `src/test.js` | Generates every service alone, all services together and every preset, then runs the static checks and the AWS Backup and CloudWatch assertions. Exits non-zero on a failure. |
+| `src/test.js` | Generates every service alone, all services together and every preset, then runs the static checks and the AWS Backup, CloudWatch and Landing Zone assertions. Exits non-zero on a failure. |
 | `sample-project/` | Output of the "Guided example: web server in a VPC" preset, exactly as the dashboard produces it. |
 
 ## Prerequisites
@@ -79,6 +80,40 @@ node test.js              # generator and validation tests (add --print to dump 
 - With both selected, CloudWatch adds backup job failure and completion rules, vault notifications, and a backup jobs dashboard widget.
 - Restores are not generated: Terraform has no resource that runs a restore job. `aws_backup_region_settings` is not generated either, because the opt-in settings are account-wide.
 - EventBridge resources keep their original Terraform names (`aws_cloudwatch_event_rule`, `aws_cloudwatch_event_target`). Rules use `state`, because `is_enabled` is deprecated.
+
+## AWS Landing Zone
+
+The **Landing Zone** tab builds a multi-account foundation. It is one catalog service (`landing_zone`, category Landing Zone) whose configuration is a structured model edited in a nine-step wizard instead of the drawer form: Type, Organization, OUs, Accounts, Placement, Governance (SCPs), Control Tower, Review and Generate.
+
+- **Enterprise** uses AWS Organizations and AWS Control Tower. **Non-Enterprise** uses AWS Organizations only; the Control Tower step is disabled. Neither model is presented as better.
+- Both starter templates are listed under "Start from an example" too. Every OU, account and policy in them can be renamed, moved or removed.
+- Model, templates, checks and the generator live in `landingzone.js`. The UI is in `landing.js`. Because the model is not form fields, the service provides `defaults()` instead of `fields`, and `openConfig` sends it to the wizard.
+
+Generated files (flat, like every other service):
+
+| File | Resources |
+| --- | --- |
+| `organization.tf` | `aws_organizations_organization` (create, or `import` block), or `data.aws_organizations_organization` for an existing one |
+| `organizational_units.tf` | `aws_organizations_organizational_unit`; nested OUs reference their parent |
+| `default_accounts.tf`, `custom_accounts.tf` | `aws_organizations_account`; placement is its `parent_id` |
+| `existing_accounts.tf` | `import` blocks for accounts to adopt and move; referenced accounts are only IDs in `var.existing_account_ids` |
+| `service_control_policies.tf`, `scp_attachments.tf` | `aws_organizations_policy` (type `SERVICE_CONTROL_POLICY`, `jsonencode` content) and `aws_organizations_policy_attachment` to the root, OUs or accounts |
+| `control_tower_roles.tf` | The three documented service roles in `/service-role/` (Enterprise, new landing zone) |
+| `control_tower.tf` | `aws_controltower_landing_zone` with a landing zone 4.0 manifest |
+| `control_tower_baselines.tf` | `aws_controltower_baseline` (AWSControlTowerBaseline 5.0) to register OUs and enroll their accounts |
+| `control_tower_controls.tf` | `aws_controltower_control` with the documented legacy control identifiers |
+| `account_factory.tf` | `aws_servicecatalog_provisioned_product` of the "AWS Control Tower Account Factory" product |
+
+Design decisions and limits:
+
+- There is no account-to-OU attachment resource in the provider. Moving an account is a change to `parent_id`, and existing accounts are adopted with `import` blocks and `ignore_changes = [name, email]`, so they are never recreated.
+- Enterprise accounts default to `role_name = "AWSControlTowerExecution"`, which Control Tower needs to enroll an account when its OU is registered.
+- SCP templates come from [aws-samples/service-control-policy-examples](https://github.com/aws-samples/service-control-policy-examples). No SCP is created or attached unless the user adds it and picks targets. User-supplied policy text is quoted with `lzq()`, which escapes IAM policy variables such as `${aws:PrincipalAccount}` to `$${...}`.
+- Not generated, because the provider has no resource for them: landing zone repair and reset, mandatory controls, Account Factory network and blueprint settings, and single-account enrollment without registering the OU. The wizard and the Generate step list these with their alternatives.
+- No credentials are generated. Account emails are placeholders in `var.accounts`. Account Factory needs `account_factory_provisioning_artifact_id`, which has no default.
+- The checks in `lzCheck()` cover the OU hierarchy (duplicates, missing parents, more than five levels, loops), account emails and IDs, placement, SCP JSON, size and the 5-per-target quota, and Control Tower prerequisites (Log Archive and Audit in one top-level OU, home Region governed, controls only on registered OUs).
+
+Checked on 2026-10-01: the Enterprise and Non-Enterprise templates, plus imported organization, existing organization, existing landing zone, Account Factory, every SCP template, a JSON SCP and a combination with VPC, Transit Gateway, S3, AWS Backup and CloudWatch, all pass `terraform validate` with hashicorp/aws 6.67.0 and Terraform 1.16.4.
 
 ## Updating provider versions
 

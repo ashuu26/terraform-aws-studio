@@ -10,7 +10,8 @@ const PROVIDER_SNAPSHOT = { latestSeen: '6.56.0', checked: '2026-09-25' };
 const TF_VERSIONS = ['1.15', '1.14', '1.13', '1.12', '1.11', '1.10', '1.9', '1.8'];
 const REGIONS = ['ap-southeast-1', 'ap-southeast-5', 'ap-southeast-2', 'ap-southeast-3', 'ap-northeast-1', 'ap-south-1', 'us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1'];
 
-function defaultConfig(svc) { const o = {}; for (const f of svc.fields) if (f.k) o[f.k] = f.d; return o; }
+// Services with a structured model (the landing zone) supply a defaults() template instead of form fields.
+function defaultConfig(svc) { if (svc.defaults) return svc.defaults(); const o = {}; for (const f of svc.fields) if (f.k) o[f.k] = f.d; return o; }
 // Service files are <file>.tf; the category layout prefixes the category unless the stem already starts with it.
 function svcFileName(s, stem, layout) { return (layout === 'category' && !stem.startsWith(s.cat + '_') ? s.cat + '_' : '') + stem + '.tf'; }
 function typesIn(body) {
@@ -363,9 +364,15 @@ function validateProject(files, selIds, cfgAll, g) {
   }
   if (!checks.design.items.length) add('design', 'ok', 'Selected services have the pieces they depend on.');
 
+  // AWS Landing Zone: model-level checks (OU hierarchy, accounts, placement, SCP JSON, Control Tower dependencies).
+  if (sel.has('landing_zone')) {
+    checks.landingzone = { label: 'Landing Zone', items: [] };
+    for (const i of lzCheck(cfgOf('landing_zone'), g)) if (i.level !== 'ok') add('landingzone', i.level, `${i.area}: ${i.msg}`);
+  }
+
   for (const k of Object.keys(checks)) {
     const c = checks[k];
-    if (!c.items.length) c.items.push({ level: 'ok', msg: { syntax: 'All brackets, braces and strings are balanced.', variables: 'Every var.* reference is declared and every variable is used.', refs: 'Every resource, data and local reference resolves.', outputs: 'All outputs reference resources that exist.', provider: 'hashicorp/aws is required and configured.' }[k] || 'OK' });
+    if (!c.items.length) c.items.push({ level: 'ok', msg: { syntax: 'All brackets, braces and strings are balanced.', variables: 'Every var.* reference is declared and every variable is used.', refs: 'Every resource, data and local reference resolves.', outputs: 'All outputs reference resources that exist.', provider: 'hashicorp/aws is required and configured.', landingzone: 'Organization, OU hierarchy, accounts, placement, SCP JSON and dependencies are consistent.' }[k] || 'OK' });
     const lv = c.items.map(i => i.level);
     c.status = lv.includes('error') ? 'error' : lv.includes('warn') ? 'warn' : 'ok';
   }

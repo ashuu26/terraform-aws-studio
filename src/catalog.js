@@ -70,10 +70,13 @@ const CATS = {
   storage: { label: 'Storage', color: 'sto' },
   backup: { label: 'Backup', color: 'bkp' },
   monitoring: { label: 'Monitoring', color: 'mon' },
+  landingzone: { label: 'Landing Zone', color: 'lz' },
 };
 
 const SERVICES = [];
-function S(def) { def.fields = def.fields || []; def.deps = def.deps || []; def.kw = def.kw || ''; def.assume = def.assume || []; def.guide = def.guide || []; SERVICES.push(def); }
+// Filled as services register, so later files (landingzone.js) can add services too.
+const SVC = {};
+function S(def) { def.fields = def.fields || []; def.deps = def.deps || []; def.kw = def.kw || ''; def.assume = def.assume || []; def.guide = def.guide || []; SERVICES.push(def); SVC[def.id] = def; }
 // Static deps plus the ones a service suggests for its current configuration.
 function depsOf(id, cfg, has) {
   const s = SVC[id];
@@ -2021,7 +2024,6 @@ S({
   },
 });
 
-const SVC = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 
 const PRESETS = [
   { name: 'Guided example: web server in a VPC', ids: ['vpc', 'subnet', 'route_table', 'igw', 'nat', 'sg', 'ec2'] },
