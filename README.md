@@ -1,4 +1,4 @@
-# Terraform AWS Studio
+# Terraform Studio (AWS and Azure)
 
 An interactive studio for learning the `hashicorp/aws` provider. You pick AWS services, configure them, and get a Terraform project where the resources reference each other. You can then review the code, learn what each block does, and download the project as a ZIP.
 
@@ -6,21 +6,27 @@ An interactive studio for learning the `hashicorp/aws` provider. You pick AWS se
 
 | Path | Purpose |
 | --- | --- |
-| `index.html` | The whole app in one self-contained file (built output). |
+| `index.html`, `assets/landing.css`, `assets/landing.js` | Landing page: interactive AWS / Azure chooser (live topology, typed `terraform plan`, keyboard shortcuts, last-used provider). Public. |
+| `login.html` | Sign-in page (Google and GitHub through Firebase Authentication). |
+| `aws/index.html` | The AWS studio in one self-contained file (built output). Requires sign-in. |
+| `azure/index.html` | Azure studio placeholder (in development). Requires sign-in. |
+| `assets/auth-config.js` | Firebase web app settings, enabled providers and optional email allow-lists. |
+| `assets/auth.js`, `assets/theme.js`, `assets/site.css` | Sign-in logic and page gate, shared light/dark theme, styles for the landing, login and Azure pages. |
 | `src/catalog.js` | Service catalog: metadata, config fields and one Terraform generator per service. |
 | `src/landingzone.js` | AWS Landing Zone model, starter templates, SCP templates, Control Tower control catalog, model checks and the `landing_zone` generator. |
 | `src/engine.js` | Project assembly, `fmt`-style alignment, static validation and HCL syntax highlighting. |
 | `src/learn.js` | Learning content: resource summaries, concept topics, CLI and auth notes, Registry module map. |
 | `src/ui.js`, `src/views.js`, `src/landing.js` | UI state, header, summary panel, service cards, drawers, the seven views, and the Landing Zone dashboard and wizard. |
 | `src/styles.css`, `src/template.html` | Styles and the HTML shell. |
-| `src/build.py` | Inlines CSS and JS into `index.html`. |
+| `src/build.py` | Inlines CSS and JS into the AWS studio page. |
 | `src/test.js` | Generates every service alone, all services together and every preset, then runs the static checks and the AWS Backup, CloudWatch and Landing Zone assertions. Exits non-zero on a failure. |
 | `sample-project/` | Output of the "Guided example: web server in a VPC" preset, exactly as the dashboard produces it. |
 
 ## Prerequisites
 
 - Any modern browser to use the dashboard.
-- Python 3.8+ to rebuild `index.html` from `src/`.
+- Python 3.8+ to rebuild `aws/index.html` from `src/`.
+- A Firebase project for Google and GitHub sign-in (free Spark plan is enough).
 - Node.js 18+ to run the generator tests.
 - For deploying generated code:
   - Terraform 1.8 or newer. Native S3 state locking needs 1.10 or newer.
@@ -29,7 +35,7 @@ An interactive studio for learning the `hashicorp/aws` provider. You pick AWS se
 
 ## Run locally
 
-No install step is needed. Open `index.html` in a browser, or serve the folder:
+No install step is needed. Serve the folder and open the landing page:
 
 ```bash
 cd terraform-aws-dashboard
@@ -37,7 +43,26 @@ python3 -m http.server 8080
 # open http://localhost:8080
 ```
 
-The page loads JSZip from cdnjs and fonts from Google Fonts. Offline, everything still works except ZIP downloads, and the fonts fall back to system fonts.
+The page loads JSZip from cdnjs and fonts from Google Fonts. Offline, everything still works except ZIP downloads and sign-in, and the fonts fall back to system fonts.
+
+Until `assets/auth-config.js` is filled in, the login page shows **Continue in local preview mode** on `localhost`, `127.0.0.1` and `file://` so you can work on the studio without signing in. On any other host, the studios stay locked until sign-in is configured.
+
+## Sign-in (Google and GitHub)
+
+Visitors land on `index.html` and choose AWS or Azure. Opening a studio needs a Google or GitHub sign-in, handled by Firebase Authentication from the browser, so no server is needed.
+
+1. **Create a Firebase project** at <https://console.firebase.google.com>, then go to *Project settings > General > Your apps* and add a **Web app**. Copy `apiKey`, `authDomain`, `projectId` and `appId` into `assets/auth-config.js`. These values identify the project; they are not secrets.
+2. **Google**: in *Authentication > Sign-in method*, enable **Google** and pick a support email.
+3. **GitHub**:
+   1. In *Authentication > Sign-in method*, enable **GitHub** and copy the callback URL it shows (`https://<project>.firebaseapp.com/__/auth/handler`).
+   2. On GitHub, open *Settings > Developer settings > OAuth Apps > New OAuth App*. Set the homepage to your site URL and the authorization callback URL to the value from the previous step.
+   3. Paste the GitHub **Client ID** and **Client secret** into the Firebase GitHub provider and save. The secret is stored in Firebase, never in this repository.
+4. **Authorized domains**: in *Authentication > Settings > Authorized domains*, add the domain that serves the site, for example `ashuu26.github.io`. `localhost` is there by default.
+5. Optional: to limit who can open the studios, set `allowedEmailDomains` (for example `['softwareone.com']`) or `allowedEmails` in `assets/auth-config.js`.
+
+If someone signs in with GitHub and Google using the same email, Firebase rejects the second method by default (`account-exists-with-different-credential`), and the login page explains this. To let one person use both, change *Authentication > Settings > User account linking* to "Create multiple accounts for each identity provider".
+
+**What the gate protects.** This is a static site, so the check runs in the browser. It decides who gets the studio experience, but the HTML and JavaScript files are still public to anyone who requests them directly. Don't put secrets or private data in the studio files. For real access control, host the site behind a server-side check such as Firebase Hosting with a function, Cloudflare Access or Azure Static Web Apps authentication.
 
 ## Build
 
@@ -47,7 +72,7 @@ python3 build.py          # writes dist/index.html
 node test.js              # generator and validation tests (add --print to dump sample files)
 ```
 
-`build.py` writes `src/dist/index.html`; copy it over the root `index.html`. Run it with Python in UTF-8 mode (`python3 -X utf8 build.py`) on Windows, because the sources contain non-ASCII characters.
+`build.py` writes `src/dist/index.html`; copy it over `aws/index.html` (not the root `index.html`, which is now the landing page). Run it with Python in UTF-8 mode (`python3 -X utf8 build.py`) on Windows, because the sources contain non-ASCII characters.
 
 ## Adding a new service
 

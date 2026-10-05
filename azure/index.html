@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-auth="required">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terraform Azure Studio</title>
+<link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<script src="../assets/theme.js"></script>
+<script src="../assets/auth-config.js"></script>
+<script defer src="../assets/auth.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" href="../">
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="1" y="1" width="38" height="38" rx="9" fill="var(--azure)"/>
+        <path d="M9 12.5l7 4v8l-7-4z" fill="#fff" opacity=".55"/><path d="M17.5 17.5l7-4v8l-7 4z" fill="#fff"/><path d="M17.5 27l7-4v8l-7-4z" fill="#fff" opacity=".8"/><path d="M26 12.5l6-3.5v8l-6 3.5z" fill="#fff" opacity=".7"/>
+      </svg>
+      <span><b>Terraform Azure Studio</b><small>AzureRM Provider | Terraform Registry | Infrastructure as Code</small></span>
+    </a>
+    <button class="btn ghost" id="themeBtn" type="button" title="Toggle dark or light mode" aria-label="Toggle dark or light mode"></button>
+    <span data-user-slot></span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="soon-card" aria-labelledby="soonTitle">
+    <div>
+      <span class="badge soon">In development</span>
+      <h1 id="soonTitle" style="margin-top:12px">Terraform Azure Studio is on the way</h1>
+    </div>
+    <p class="lead">It will use the same workflow as the AWS Studio: choose services, configure them, review the generated <code>azurerm</code> code with explanations, and download a project where the resources reference each other.</p>
+
+    <div class="soon-grid">
+      <div><b>Networking</b><code>azurerm_virtual_network, azurerm_subnet</code></div>
+      <div><b>Compute</b><code>azurerm_linux_virtual_machine, azurerm_kubernetes_cluster</code></div>
+      <div><b>Data</b><code>azurerm_mssql_server, azurerm_cosmosdb_account</code></div>
+      <div><b>Storage and secrets</b><code>azurerm_storage_account, azurerm_key_vault</code></div>
+      <div><b>Operations</b><code>azurerm_monitor_*, azurerm_recovery_services_vault</code></div>
+      <div><b>Landing zone</b><code>Management groups and Azure Policy</code></div>
+    </div>
+
+    <pre class="code" aria-label="Example azurerm provider block"><span class="c"># providers.tf — the generated projects will start from this</span>
+<span class="k">terraform</span> {
+  required_providers {
+    azurerm = {
+      source  = <span class="s">"hashicorp/azurerm"</span>
+      version = <span class="s">"~> 4.0"</span>
+    }
+  }
+}
+
+<span class="k">provider</span> <span class="s">"azurerm"</span> {
+  features {}
+  subscription_id = var.subscription_id
+}</pre>
+
+    <div class="row">
+      <a class="btn primary" href="../aws/">Open the AWS Studio</a>
+      <a class="btn" href="../">Back to provider choice</a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <span>&copy; <span id="yr">2026</span> Ashu Saini | Created by Ashu Saini · Co-powered by Abhishek Chaurasia</span>
+  <span>Not affiliated with Microsoft or HashiCorp. Terraform and Azure are trademarks of their respective owners.</span>
+</footer>
+</body>
+</html>
