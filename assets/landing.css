@@ -3,15 +3,9 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --term-bg: #0B1118; } }
 :root[data-theme="dark"] { --net: #6FA8E0; --cmp: #E0A93B; --db: #5FBF8A; --sto: #E07A95; --term-bg: #0B1118; }
 
-/* ---------- ambient background ---------- */
-.ambient { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
-.ambient i { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(80px); opacity: .16; transition: background 0.6s, opacity 0.6s; }
-.ambient i:nth-child(1) { left: -12vmax; top: -10vmax; background: var(--aws); animation: drift 22s ease-in-out infinite alternate; }
-.ambient i:nth-child(2) { right: -14vmax; top: 10vmax; background: var(--azure); animation: drift 26s ease-in-out infinite alternate-reverse; }
-.ambient i:nth-child(3) { left: 30%; bottom: -24vmax; background: var(--plan); opacity: .10; animation: drift 30s ease-in-out infinite alternate; }
+/* ---------- ambient background (base rules in site.css) ---------- */
 body[data-active="aws"] .ambient i:nth-child(1) { opacity: .28; }
 body[data-active="azure"] .ambient i:nth-child(2) { opacity: .28; }
-@keyframes drift { to { transform: translate(6vmax, 4vmax) scale(1.08); } }
 
 /* ---------- hero ---------- */
 .hero { padding: 56px 0 28px; }

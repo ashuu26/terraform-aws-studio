@@ -112,3 +112,13 @@ button { font: inherit; color: inherit; }
 pre.code { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 13px/1.6 var(--mono); }
 pre.code .k { color: var(--plan); } pre.code .s { color: var(--ok); } pre.code .c { color: var(--muted); }
 .row { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* ---------- ambient background (shared by landing, login and both studios) ---------- */
+.ambient { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.ambient i { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(80px); opacity: .16; transition: background 0.6s, opacity 0.6s; }
+.ambient i:nth-child(1) { left: -12vmax; top: -10vmax; background: var(--aws, #B8790A); animation: drift 22s ease-in-out infinite alternate; }
+.ambient i:nth-child(2) { right: -14vmax; top: 10vmax; background: var(--azure, #2F6FB0); animation: drift 26s ease-in-out infinite alternate-reverse; }
+.ambient i:nth-child(3) { left: 30%; bottom: -24vmax; background: var(--plan); opacity: .10; animation: drift 30s ease-in-out infinite alternate; }
+@keyframes drift { to { transform: translate(6vmax, 4vmax) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .ambient i { animation: none; } }
+.ambient canvas.flow { position: absolute; inset: 0; display: block; }

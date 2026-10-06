@@ -7,8 +7,6 @@
   :root:not([data-theme="light"]) { --plan: #5AA9F0; --plan-ink: #0F161E; --plan-soft: #172636; --t-k: #7DBBF3; --t-b: #7DBBF3; }
 }
 :root[data-theme="dark"] { --plan: #5AA9F0; --plan-ink: #0F161E; --plan-soft: #172636; --t-k: #7DBBF3; --t-b: #7DBBF3; }
-.prov-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.prov-switch select { width: auto; padding: 5px 8px; font-size: 13px; }
 .lz-pick label.chk { font-size: 15px; }
 @media (max-width: 900px) {
   .lz-split { grid-template-columns: minmax(0, 1fr) !important; }

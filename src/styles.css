@@ -42,6 +42,21 @@ html[data-auth="required"]:not(.auth-ok) body { visibility: hidden; }
 *, *::before, *::after { box-sizing: inherit; }
 html { scroll-padding-top: env(safe-area-inset-top, 0px); }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+/* Same backdrop as the landing page: faint grid plus drifting provider glows. */
+body { background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 32px 32px; }
+/* ---------- ambient background (shared by landing, login and both studios) ---------- */
+:root { --aws: #B8790A; --azure: #2F6FB0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --aws: #E0A93B; --azure: #6FA8E0; } }
+:root[data-theme="dark"] { --aws: #E0A93B; --azure: #6FA8E0; }
+.ambient { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.ambient i { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(80px); opacity: .16; transition: background 0.6s, opacity 0.6s; }
+.ambient i:nth-child(1) { left: -12vmax; top: -10vmax; background: var(--aws); animation: drift 22s ease-in-out infinite alternate; }
+.ambient i:nth-child(2) { right: -14vmax; top: 10vmax; background: var(--azure); animation: drift 26s ease-in-out infinite alternate-reverse; }
+.ambient i:nth-child(3) { left: 30%; bottom: -24vmax; background: var(--plan); opacity: .10; animation: drift 30s ease-in-out infinite alternate; }
+@keyframes drift { to { transform: translate(6vmax, 4vmax) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .ambient i { animation: none; } }
+.ambient canvas.flow { position: absolute; inset: 0; display: block; }
+
 a { color: var(--plan); text-underline-offset: 2px; }
 code, .mono { font-family: var(--mono); font-size: .86em; }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -78,6 +93,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand h1 { font-size: 19px; line-height: 1.2; margin: 0; letter-spacing: -.01em; }
 .brand p { margin: 0; font-size: 13px; color: var(--muted); }
 .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prov-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.prov-switch select { width: auto; padding: 5px 8px; font-size: 13px; }
 .ctl { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .ctl select { width: auto; padding: 5px 8px; font-size: 13px; }
 .search { position: relative; }

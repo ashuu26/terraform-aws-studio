@@ -8,6 +8,15 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const STORE_KEY = 'tf-azure-studio:v1';
+// Day/Night is shared with the landing page, login page and AWS studio (see assets/theme.js).
+const THEME_KEY = 'tf-aws-dashboard:v1';
+function sharedTheme(set) {
+  try {
+    const d = JSON.parse(localStorage.getItem(THEME_KEY) || '{}') || {};
+    if (set === undefined) return d.theme === 'light' || d.theme === 'dark' ? d.theme : null;
+    d.theme = set; localStorage.setItem(THEME_KEY, JSON.stringify(d));
+  } catch (e) { return null; }
+}
 const DIFFS = ['Beginner', 'Intermediate', 'Advanced'];
 const CAT_VAR = { networking: 'var(--net)', compute: 'var(--cmp)', database: 'var(--db)', storage: 'var(--sto)', backup: 'var(--bkp)', monitoring: 'var(--mon)', landingzone: 'var(--lz)', root: 'var(--root)', extra: 'var(--root)' };
 const ABBR = {
@@ -49,6 +58,7 @@ const state = {
   archDeps: false, recOff: new Set(), learnQ: '', lzType: 'Enterprise', modMode: 'raw',
 };
 function load() {
+  const t = sharedTheme(); if (t) state.theme = t;
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return;
@@ -56,7 +66,7 @@ function load() {
     if (Array.isArray(d.sel)) state.sel = d.sel.filter(id => SVC[id]);
     if (d.cfg && typeof d.cfg === 'object') state.cfg = d.cfg;
     if (d.g) Object.assign(state.g, d.g);
-    if (d.theme === 'light' || d.theme === 'dark') state.theme = d.theme;
+    if (!t && (d.theme === 'light' || d.theme === 'dark')) state.theme = d.theme;
     if (typeof d.openOnSelect === 'boolean') state.openOnSelect = d.openOnSelect;
     if (d.lzType === 'Enterprise' || d.lzType === 'Standard') state.lzType = d.lzType;
   } catch (e) { /* storage unavailable or corrupt: start fresh */ }
@@ -204,11 +214,10 @@ function initHeader() {
   q.addEventListener('input', () => { state.q = q.value; if (state.tab !== 'services') setTab('services', false); else renderMain(); });
   $('#themeBtn').onclick = () => {
     const dark = state.theme ? state.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-    state.theme = dark ? 'light' : 'dark'; applyTheme(); persist(); if (state.tab === 'arch' || state.tab === 'landing') renderMain();
+    state.theme = dark ? 'light' : 'dark'; sharedTheme(state.theme); applyTheme(); persist(); if (state.tab === 'arch' || state.tab === 'landing') renderMain();
   };
   $('#resetBtn').onclick = resetAll;
   $('#genBtnTop').onclick = generate;
-  $('#zipBtnTop').onclick = downloadZip;
   renderTabs();
 }
 function renderTabs() {
@@ -229,7 +238,6 @@ function renderTabs() {
       if (j !== null) { e.preventDefault(); setTab(TABS[j][0]); $('#tab-' + TABS[j][0]).focus(); }
     };
   });
-  const zb = $('#zipBtnTop'); if (zb) zb.disabled = !state.gen;
 }
 function setTab(t, scroll = true) {
   state.tab = t; renderTabs(); renderMain();
