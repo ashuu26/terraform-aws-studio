@@ -1,0 +1,23 @@
+/* Azure studio layer on top of ../styles.css: Azure-blue accent, same design system. */
+:root {
+  --plan: #0F6CBD; --plan-ink: #FFFFFF; --plan-soft: #E3EEF9;
+  --t-k: #0F6CBD; --t-b: #0F6CBD;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --plan: #5AA9F0; --plan-ink: #0F161E; --plan-soft: #172636; --t-k: #7DBBF3; --t-b: #7DBBF3; }
+}
+:root[data-theme="dark"] { --plan: #5AA9F0; --plan-ink: #0F161E; --plan-soft: #172636; --t-k: #7DBBF3; --t-b: #7DBBF3; }
+.prov-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.prov-switch select { width: auto; padding: 5px 8px; font-size: 13px; }
+.lz-pick label.chk { font-size: 15px; }
+@media (max-width: 900px) {
+  .lz-split { grid-template-columns: minmax(0, 1fr) !important; }
+}
+/* Long azurerm_* type names must wrap instead of widening the summary column. */
+.summary > *, .summary li, .summary label { min-width: 0; }
+.summary code, .summary .why { overflow-wrap: anywhere; }
+/* Cards carry two documentation links, so they get their own row above Details / Select. */
+.card-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.card-actions { flex-wrap: wrap; justify-content: flex-end; }
+.card-actions .btn, .card-links .btn { white-space: nowrap; }
+.card-links .btn { padding: 4px 8px; }

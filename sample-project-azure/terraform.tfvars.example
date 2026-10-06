@@ -1,0 +1,53 @@
+# Copy to terraform.tfvars and adjust. Never put client secrets, passwords or keys here:
+# pass sensitive inputs as TF_VAR_<name> environment variables from a secret store instead.
+
+# subscription_id = null
+# location = "southeastasia"
+# project_name = "tfstudio"
+# environment = "dev"
+# additional_tags = {}
+# resource_group_name = "rg-tfstudio-dev"
+# policy_allowed_locations = ["southeastasia", "eastasia"]
+# policy_required_tags = ["Environment", "Owner"]
+# policy_allowed_environments = ["dev", "test", "prod"]
+# role_assignments = {}
+# vm_operator_principal_ids = []
+# vnet_address_space = ["10.0.0.0/16"]
+# vnet_dns_servers = []
+# subnets = {
+#   app = {
+#     address_prefixes = ["10.0.1.0/24"]
+#   }
+#   data = {
+#     address_prefixes = ["10.0.2.0/24"]
+#   }
+#   endpoints = {
+#     address_prefixes = ["10.0.3.0/24"]
+#   }
+# }
+# subnet_default_outbound_access = true
+# nsg_allowed_ports = ["443"]
+# nsg_allowed_source = "VirtualNetwork"
+# admin_username = "azureuser"
+admin_ssh_public_key = "REPLACE_ME" # required
+# vms = {
+#   web-01 = {
+#     zone = "1"
+#   }
+#   web-02 = {
+#     zone = "2"
+#   }
+# }
+# vm_size = "Standard_B2s"
+# vm_os_disk_type = "Premium_LRS"
+# vm_os_disk_size_gb = 64
+# storage_account_name = null
+# storage_replication_type = "ZRS"
+# storage_soft_delete_days = 14
+# sql_entra_admin_login = "sql-admins"
+# sql_entra_admin_object_id = null
+# sql_database_name = "appdb"
+# sql_database_sku = "GP_S_Gen5_2"
+# recovery_vault_storage_mode = "GeoRedundant"
+# log_analytics_retention_days = 30
+# log_analytics_daily_quota_gb = -1

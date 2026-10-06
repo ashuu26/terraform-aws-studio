@@ -102,7 +102,7 @@
           <h2>Microsoft Azure</h2>
           <p>hashicorp/azurerm</p>
         </div>
-        <span class="tags"><span class="badge soon">In development</span></span>
+        <span class="tags"><span class="badge live">Available</span></span>
       </div>
 
       <svg class="topo" viewBox="0 0 340 140" role="img" aria-label="Example Azure architecture: internet to application gateway to two virtual machines to Azure SQL, inside a virtual network">
@@ -127,12 +127,12 @@
         <pre></pre>
       </div>
 
-      <p id="azure-desc" class="hint">Terraform Azure Studio uses the same workflow with the azurerm provider, from resource groups and VNets to a CAF landing zone. Preview the plan today.</p>
+      <p id="azure-desc" class="hint">Terraform Azure Studio uses the same workflow with the azurerm provider: 63 services from resource groups and VNets to AKS, Azure SQL, backup, monitoring and an Enterprise or Standard landing zone.</p>
       <ul class="chips" aria-label="Azure highlights">
-        <li>Resource groups</li><li>VNet &amp; NSG</li><li>VMs &middot; AKS</li><li>Azure SQL &middot; Cosmos DB</li><li>Key Vault</li><li>CAF landing zone</li>
+        <li>Resource groups</li><li>VNet &amp; NSG</li><li>VMs &middot; AKS</li><li>Azure SQL &middot; Cosmos DB</li><li>Backup &middot; Monitor</li><li>Landing zone</li>
       </ul>
       <div class="side-cta">
-        <span>Preview Azure Studio</span>
+        <span>Open Azure Studio</span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </div>
     </a>
@@ -140,16 +140,21 @@
 
   <section aria-label="How it works">
     <div class="flow">
-      <div class="step"><h3>Choose a cloud</h3><p>Start with AWS today. Azure is on the way.</p></div>
+      <div class="step"><h3>Choose a cloud</h3><p>Start with AWS or Azure. Both use the same workflow.</p></div>
       <div class="step"><h3>Pick services</h3><p>Dependencies are suggested as you go, so the VPC, subnets and security groups line up.</p></div>
       <div class="step"><h3>Configure and learn</h3><p>Every block is explained, with links to the Terraform Registry docs.</p></div>
       <div class="step"><h3>Download</h3><p>Get a ZIP that is ready for <code>terraform init</code> and <code>plan</code>.</p></div>
     </div>
-    <div class="stats">
-      <div class="stat"><b data-to="54">54</b><span>AWS services</span></div>
-      <div class="stat"><b data-to="89">89</b><span>Terraform resource types</span></div>
-      <div class="stat"><b data-to="7">7</b><span>Guided presets</span></div>
-      <div class="stat"><b data-to="2">2</b><span>Cloud providers</span></div>
+    <!-- Per-provider counts: data-aws / data-azure hold the values for each studio. landing.js
+         switches them with the active provider; the text below is the no-JavaScript fallback. -->
+    <div class="stats-wrap" data-provider="aws">
+      <p class="stats-for" id="statsFor">Showing <b data-aws="AWS" data-azure="Azure">AWS</b> studio counts. Point at a provider or press <kbd>A</kbd> / <kbd>Z</kbd> to switch.</p>
+      <div class="stats" aria-labelledby="statsFor">
+        <div class="stat"><b data-aws="55" data-azure="63">55</b><span data-aws="AWS services" data-azure="Azure services">AWS services</span></div>
+        <div class="stat"><b data-aws="100" data-azure="133">100</b><span data-aws="hashicorp/aws resource types" data-azure="hashicorp/azurerm resource types">hashicorp/aws resource types</span></div>
+        <div class="stat"><b data-aws="9" data-azure="10">9</b><span>Guided presets</span></div>
+        <div class="stat"><b data-aws="7" data-azure="7">7</b><span>Service categories</span></div>
+      </div>
     </div>
   </section>
 </main>

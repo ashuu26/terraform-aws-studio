@@ -1,6 +1,6 @@
 # Terraform Studio (AWS and Azure)
 
-An interactive studio for learning the `hashicorp/aws` provider. You pick AWS services, configure them, and get a Terraform project where the resources reference each other. You can then review the code, learn what each block does, and download the project as a ZIP.
+An interactive studio for learning the `hashicorp/aws` and `hashicorp/azurerm` providers. You pick AWS services, configure them, and get a Terraform project where the resources reference each other. You can then review the code, learn what each block does, and download the project as a ZIP.
 
 ## What's in this folder
 
@@ -9,9 +9,11 @@ An interactive studio for learning the `hashicorp/aws` provider. You pick AWS se
 | `index.html`, `assets/landing.css`, `assets/landing.js` | Landing page: interactive AWS / Azure chooser (live topology, typed `terraform plan`, keyboard shortcuts, last-used provider). Public. |
 | `login.html` | Sign-in page (Google and GitHub through Firebase Authentication). |
 | `aws/index.html` | The AWS studio in one self-contained file (built output). Requires sign-in. |
-| `azure/index.html` | Azure studio placeholder (in development). Requires sign-in. |
+| `azure/index.html` | The Azure studio in one self-contained file (built output). Requires sign-in. See [Terraform Azure Studio](#terraform-azure-studio). |
 | `assets/auth-config.js` | Firebase web app settings, enabled providers and optional email allow-lists. |
-| `assets/auth.js`, `assets/theme.js`, `assets/site.css` | Sign-in logic and page gate, shared light/dark theme, styles for the landing, login and Azure pages. |
+| `assets/auth.js`, `assets/theme.js`, `assets/site.css` | Sign-in logic and page gate, shared light/dark theme, styles for the landing and login pages. |
+| `src/azure/` | Azure studio sources: metadata, generators, engine, learning content, UI, build script and tests. |
+| `sample-project-azure/` | Output of the Azure "Spec journey" preset, exactly as the studio produces it. |
 | `src/catalog.js` | Service catalog: metadata, config fields and one Terraform generator per service. |
 | `src/landingzone.js` | AWS Landing Zone model, starter templates, SCP templates, Control Tower control catalog, model checks and the `landing_zone` generator. |
 | `src/engine.js` | Project assembly, `fmt`-style alignment, static validation and HCL syntax highlighting. |
@@ -186,3 +188,83 @@ The argument and attribute lists in `learn.js` are a hand-curated, commonly used
 - **Category layout prefixes file names instead of using subfolders.** Terraform only loads `.tf` files from the working directory, so category subfolders would turn into modules that nothing calls. Module-based structure is explained in the Modules tab rather than generated.
 - **Single-file downloads come as ZIPs.** When the dashboard is published on claude.ai, `.tf` is not an allowed download type, so single files are wrapped in a `.zip`. When you run it locally, downloads use the browser directly.
 - **Generated code is for learning, not a production baseline.** It uses one shared security group, a single NAT gateway and simplified IAM. The assumptions for each service are listed in its configuration drawer.
+
+## Terraform Azure Studio
+
+The Azure studio follows the same workflow as the AWS studio: **select category → select services → configure → generate → review → learn → validate → copy or download**. It targets `hashicorp/azurerm` 5.x and ships 63 services in seven categories: Landing Zone, Compute, Storage, Networking, Database, Backup and Monitoring.
+
+### Source layout (`src/azure/`)
+
+| File | Purpose |
+| --- | --- |
+| `core.js` | Metadata model (`S({...})`), categories, HCL builders, Registry link derivation, regions and CIDR helpers. |
+| `gen_landingzone.js` | Landing Zone generator: resource groups, management groups (Enterprise CAF archetypes or Standard), Azure Policy definitions, initiatives and assignments, RBAC, locks, budgets. |
+| `gen_networking.js` | Networking generator: VNet, subnets (special and delegated subnets are added automatically), NSG, ASG, route table, NAT gateway, public IP, Load Balancer, Application Gateway and WAF, Front Door, VPN gateway, ExpressRoute, Virtual WAN, hub-and-spoke, private DNS, private endpoints, Azure Firewall, DDoS, Bastion. |
+| `gen_compute.js` | Compute generator: Linux/Windows VMs, managed disks, managed identity, scale sets with autoscale, AKS, ACR, Container Instances, Container Apps, App Service, Flex Consumption Functions. |
+| `gen_storage.js` | Storage generator: storage account with data protection, containers, file shares, queues, tables, lifecycle, network rules. |
+| `gen_database.js` | Database generator: Azure SQL (server, database, elastic pool), PostgreSQL and MySQL flexible servers, Cosmos DB (NoSQL or MongoDB), Azure Managed Redis. |
+| `gen_backup.js` | Backup generator: Recovery Services vault, VM and Azure Files backup, Backup vault for blobs, Azure Site Recovery. |
+| `gen_monitoring.js` | Monitoring generator: Log Analytics, Application Insights, diagnostic settings (resources and Activity Log), action groups, alerts, workbook, VM Insights data collection. |
+| `engine.js` | Generation context, project assembly, `fmt`-style alignment, client-side static validation, HCL highlighting. |
+| `learn.js` | Resource summaries (checked against the azurerm schema), guides, Terraform topics, landing zone governance topics, CLI, authentication and the Azure Verified Module map. |
+| `presets.js` | Example architectures and the Enterprise and Standard landing zone templates. |
+| `ui.js`, `views.js`, `lz.js` | UI state, header, summary, cards, drawers, the seven tabs and the Landing Zone designer. |
+| `template.html`, `azure.css` | HTML shell and the Azure accent layer on top of the shared `src/styles.css`. |
+| `build.py`, `test.js` | Build into one page, and generator tests. |
+
+### Build and test
+
+```bash
+cd src/azure
+python3 build.py                              # writes src/dist-azure/index.html
+cp ../dist-azure/index.html ../../azure/index.html
+node test.js                                  # 115 generator and static-check tests; non-zero exit on failure
+```
+
+Run it locally the same way as the AWS studio (`python3 -m http.server 8080` at the repo root, then open `/azure/`). With Firebase configured, sign-in is required; local preview mode only appears while `assets/auth-config.js` is empty.
+
+### How Terraform generation works
+
+1. Selected services are generated in catalog order. Each `gen(config, x)` returns HCL and registers variables (`x.v`), outputs (`x.o`), locals and shared data sources.
+2. Services reference each other directly when both are selected (`subnet_id = azurerm_subnet.this["app"].id`, `azurerm_private_dns_zone.this["blob"].id`). When a dependency is missing, the generator asks for an ID through a variable instead (`var.app_subnet_id`), or reads an existing resource group with a data source. Nothing is added silently: dependencies are shown on cards, in the configuration drawer and as "Recommended dependencies" with a confirm button.
+3. The engine writes `providers.tf` (azurerm with `features {}`; aliases `azurerm.connectivity` and `azurerm.management` in multi-subscription mode), `locals.tf`, `variables.tf`, `data.tf`, one file per service, `outputs.tf` and `terraform.tfvars.example`.
+4. Conventions: names follow `<abbreviation>-<project>-<environment>` (CAF style), globally unique names add a stable 6-character hash of the subscription, and every taggable resource sets `tags = local.common_tags` because azurerm has no provider-level default tags.
+5. Security defaults: no client secrets, passwords, keys or SAS tokens are generated. Azure SQL and PostgreSQL use Microsoft Entra ID only; MySQL takes `administrator_password_wo` from an ephemeral variable (Terraform 1.11+), so the password never reaches state; Windows VM passwords and the VPN shared key are sensitive variables with no default. Storage disables shared keys and anonymous access; PaaS services turn public access off when private endpoints are selected.
+
+### Landing Zone
+
+The Landing Zone tab offers **Enterprise** (management groups Platform/Management/Connectivity/Identity, Landing Zones/Corp/Online, Sandbox, Decommissioned; multi-subscription; hub-and-spoke with Azure Firewall and Bastion; policy, RBAC, locks, budget, central logging and backup) or **Standard** (one subscription with a VNet, NSGs, policy, RBAC, a lock and logging). The template lists every service it adds before anything changes, and each part stays an ordinary, editable service. Built-in policies are referenced by their fixed GUIDs (Allowed locations, Require a tag on resource groups, Inherit a tag from the resource group, storage guardrails, Microsoft cloud security benchmark). Modify assignments get a system-assigned identity and the Contributor role the built-in definition requires.
+
+Management group and subscription operations need tenant-level permissions. Creating subscriptions (`azurerm_subscription` aliases) is off by default and needs a billing account role.
+
+### How documentation is referenced
+
+- **Terraform Registry:** every link is derived from a real resource type by `docUrl()` in `core.js`: `https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/<type without azurerm_>` (data sources use `data-sources/`). No URL is typed by hand.
+- **Microsoft Learn:** each service has one `azdoc` link to its official overview page on learn.microsoft.com.
+- **Modules:** the Modules tab lists Azure Verified Modules (`Azure/avm-*/azurerm`) with version, required inputs and outputs read from the Registry API on 2026-10-06. Switching to "Terraform Registry modules" shows starter module blocks; they are never added to the ZIP in place of the generated resources.
+
+### Updating the AzureRM provider version
+
+- `PROVIDER_SNAPSHOT` in `engine.js` records the latest `hashicorp/azurerm` seen: **5.8.0, checked 2026-10-06** (from `https://registry.terraform.io/v1/providers/hashicorp/azurerm`). The header offers `~> 5.0`, `~> 5.8` and `>= 5.0, < 6.0`.
+- On a new release, run `node test.js`, then generate the all-services project and every preset and run `terraform init` and `terraform validate` against it. Read the provider upgrade guide on the Registry before a major version.
+
+### Adding a service
+
+1. Add an `S({...})` entry in the `gen_<category>.js` file: `id`, `name`, `cat`, `diff`, `file`, `res` (main type first), `azdoc`, `deps`, optional `suggest()`, `kw`, `desc`, `use`, `assume`, `guide`, `fields` and `gen(c, x)`. Use the context helpers: `x.rgArgs(cat)`, `x.subnetId(key)`, `x.specialSubnetId(key)`, `x.dnsZoneId(key)`, `x.law()`, `x.uai()`, `x.vm()`, `x.scope()`, `x.n(abbr)` and `x.uname(abbr, max)`.
+2. Add every new type to `RES_INFO` in `learn.js` (summary, key arguments, key attributes). `test.js` fails if a generated type has no entry.
+3. Give it an abbreviation in `ABBR` (`ui.js`) and a row in `ARCH_ROWS` (`views.js`). If an Azure Verified Module covers it, add it to `MODULES`.
+4. A service that needs its own subnet adds it in `subnetPlan()` (`gen_networking.js`); one with a private endpoint adds a row in `peTargets()`; one that emits diagnostics adds a row in `diagTargets()` (`gen_monitoring.js`).
+5. Landing zone templates are `LZ_TEMPLATES` in `presets.js`; backup and monitoring resources follow the same pattern in `gen_backup.js` and `gen_monitoring.js`.
+6. Run `node test.js`, then `terraform validate` on a generated project.
+
+### Verification performed
+
+Checked on 2026-10-06 with Terraform 1.14.8 and hashicorp/azurerm 5.8.0: every service generated alone, all 63 together (single and multi-subscription), every preset, both landing zone templates and ten alternate configurations (Windows VMs and scale sets, per-layer resource groups, MongoDB serverless Cosmos DB, public databases, Premium block-blob and file storage, Standard management groups with subscription aliases, private Container Instances, VNet-integrated apps, Premium firewall, Basic Bastion, private AKS with Virtual WAN) pass `terraform validate`. The same runs were repeated with variable defaults inlined as literals, so the provider also checked SKU and enum values. Generated files are identical to `terraform fmt` output. Nothing was applied to a real subscription, so `terraform plan` and `apply` were not run.
+
+### Azure limitations
+
+- **The stack differs from the spec.** Vanilla JavaScript, a custom editor and an SVG diagram instead of React, TypeScript, Tailwind, Monaco and React Flow, to match the AWS studio and keep a single file with no build dependencies. The UI code in `src/azure/ui.js` and `views.js` was adapted from the AWS files rather than shared; extracting a common core is a sensible next step.
+- **Validation in the page is static only** (labelled "Client-side static validation"). The page cannot run Terraform or fetch the Registry, so provider and module versions are snapshots.
+- **Category layout prefixes file names** instead of creating folders, because Terraform only loads `.tf` files from the working directory. Module-based layout is the Modules tab.
+- **Not generated:** Site Recovery replicated VMs (they need a DR network and per-disk mapping), ExpressRoute peerings and gateway connections (they follow provider provisioning), HTTPS listeners with certificates, customer-managed keys, and Key Vault.
+- **Generated code is a learning baseline,** not a production design: review sizes, SKUs, regions and costs (DDoS Network Protection, Azure Firewall, VPN gateways and ExpressRoute have significant fixed monthly costs).

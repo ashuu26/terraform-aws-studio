@@ -1,6 +1,6 @@
 // Interactive provider chooser on index.html: active-side switching, cursor spotlight,
 // typed terraform output, topology animation, keyboard shortcuts, last-used provider,
-// rotating hero word and count-up stats. Everything degrades to a static page with
+// rotating hero word and per-provider stats that follow the active side. Everything degrades to a static page with
 // prefers-reduced-motion or without JavaScript.
 (function () {
   'use strict';
@@ -29,7 +29,7 @@
     azure: [
       ['cmd', 'terraform init'],
       ['dim', 'Initializing provider plugins...'],
-      ['dim', '- Installing hashicorp/azurerm ~> 4.0'],
+      ['dim', '- Installing hashicorp/azurerm ~> 5.0'],
       ['cmd', 'terraform plan'],
       ['add', '  + azurerm_resource_group.main'],
       ['add', '  + azurerm_virtual_network.main'],
@@ -37,7 +37,7 @@
       ['add', '  + azurerm_linux_virtual_machine.web[0]'],
       ['add', '  + azurerm_linux_virtual_machine.web[1]'],
       ['add', '  + azurerm_mssql_server.db'],
-      ['hi', 'Plan: 6 to add, 0 to change, 0 to destroy.  (preview)']
+      ['hi', 'Plan: 6 to add, 0 to change, 0 to destroy.']
     ]
   };
   var typers = {};
@@ -88,6 +88,7 @@
     var sw = document.getElementById('provSwitch');
     if (sw) sw.setAttribute('aria-label', 'Switch to ' + (id === 'aws' ? 'Azure' : 'AWS'));
     if (opts && opts.focus) sides[id].focus({ preventScroll: true });
+    showStats(id, statsSeen);
   }
 
   Object.keys(sides).forEach(function (id) {
@@ -118,7 +119,47 @@
     else if (k === 'enter' && active && !(t && t.closest && t.closest('a, button'))) { e.preventDefault(); sides[active].click(); }
   });
 
-  // Start on the last-used provider (or AWS, which is the available one).
+  /* ---------- per-provider stats ---------- */
+  // Each number and label carries data-aws / data-azure. The active provider decides which is shown;
+  // numbers count from their current value to the new one. Counting starts once the row is visible.
+  var statsWrap = document.querySelector('.stats-wrap');
+  var statNums = statsWrap ? statsWrap.querySelectorAll('.stat b[data-aws]') : [];
+  var statLabels = statsWrap ? statsWrap.querySelectorAll('[data-aws]:not(.stat b)') : [];
+  var statsSeen = false, statsFor = 'aws';
+  function tween(el, to) {
+    if (el._raf) cancelAnimationFrame(el._raf);
+    var from = statsSeen ? (+el.textContent || 0) : 0;
+    if (reduce || from === to) { el.textContent = to; return; }
+    var t0 = performance.now(), dur = statsSeen && from ? 600 : 1100;
+    el._raf = requestAnimationFrame(function step(ts) {
+      var p = Math.min(1, Math.max(0, ts - t0) / dur);
+      el.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) el._raf = requestAnimationFrame(step);
+    });
+  }
+  function showStats(id, animate) {
+    if (!statsWrap) return;
+    statsFor = id;
+    statsWrap.dataset.provider = id;
+    statLabels.forEach(function (el) { el.textContent = el.dataset[id]; });
+    // Before the row has been seen, numbers stay at 0 for the first count-up.
+    if (!statsSeen && !animate) return;
+    statNums.forEach(function (el) { var to = +el.dataset[id]; if (animate) tween(el, to); else el.textContent = to; });
+  }
+  if (statsWrap) {
+    if ('IntersectionObserver' in window && !reduce) {
+      statNums.forEach(function (el) { el.textContent = '0'; });
+      var io = new IntersectionObserver(function (entries) {
+        if (!entries.some(function (en) { return en.isIntersecting; })) return;
+        io.disconnect();
+        showStats(statsFor, true);
+        statsSeen = true;
+      }, { threshold: 0.6 });
+      io.observe(statsWrap.querySelector('.stats'));
+    } else statsSeen = true;
+  }
+
+  // Start on the last-used provider, or AWS.
   var last = null;
   try { last = localStorage.getItem(LAST_KEY); } catch (e) { /* ignore */ }
   if (last && sides[last]) {
@@ -138,24 +179,4 @@
     }, 2400);
   }
 
-  /* ---------- count-up stats ---------- */
-  var nums = document.querySelectorAll('.stat b[data-to]');
-  function countUp(el) {
-    var to = +el.dataset.to, suffix = el.dataset.suffix || '';
-    if (reduce) { el.textContent = to + suffix; return; }
-    var t0 = performance.now();
-    requestAnimationFrame(function step(ts) {
-      var p = Math.min(1, Math.max(0, ts - t0) / 1100);
-      el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))) + suffix;
-      if (p < 1) requestAnimationFrame(step);
-    });
-  }
-  if ('IntersectionObserver' in window) {
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) { if (en.isIntersecting) { countUp(en.target); io.unobserve(en.target); } });
-    }, { threshold: 0.6 });
-    nums.forEach(function (n) { n.textContent = '0' + (n.dataset.suffix || ''); io.observe(n); });
-  } else {
-    nums.forEach(countUp);
-  }
 })();
